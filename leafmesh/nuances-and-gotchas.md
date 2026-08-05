@@ -1,0 +1,312 @@
+# LeafMesh — Nuances & Gotchas (READ FIRST)
+
+**SDK baseline: 2.4.107.** This file captures the non-obvious rules that cause
+real, hard-to-debug failures. Most "my agent silently does nothing" or "the
+handoff looks empty" or "Gemini behaves differently from GPT" reports trace to
+exactly one item below. Read this before wiring agents.
+
+Each rule states: **the trap → why → what to do.**
+
+---
+
+## 1. An `llm` agent's function MUST take exactly three parameters
+
+**Trap:** you write `async def my_agent(input_data, context):` and the function
+— including any `@chain` / `@compose` / `@pre_compose` on it — is **never
+called**. The raw LLM output is routed instead, and nothing errors.
+
+**Why:** the LLM path only invokes the 3-parameter form
+`(llm_response, input_data, context)`. Any other arity falls into a
+backward-compat branch that returns the raw LLM envelope and skips your
+function entirely.
+
+**Do this:** every `llm` agent function is
+```python
+async def my_agent(llm_response, input_data, context):
+    ...
+```
+`llm_response` is the model's output (parsed dict when `yields` is declared),
+`input_data` is the trigger/handoff, `context` is session/routing.
+
+Since 2.4.100 the SDK **warns loudly at start()** when it sees a 2-param llm
+function (`… will NEVER be called …`). If your decorators "do nothing," grep the
+startup log for `NEVER be called`.
+
+> Programmatic / human / external agents use other signatures — this rule is
+> `agent_type: llm` only.
+
+---
+
+## 2. How a downstream agent SEES an upstream agent's output (handoffs)
+
+**Trap:** agent B seems to ignore everything agent A produced except one text
+field. You conclude the handoff is "empty" or "provider-specific."
+
+**Why:** when A hands off to B, B's `input_data` is A's full output (a dict) —
+nothing is lost at the transport layer. But **the prompt builder is
+provider-agnostic** (byte-identical prompt for Gemini and OpenAI — there is no
+"Google drops upstream" behaviour). What varies is *rendering*:
+
+- If B's `input_data` has a `user_message` / `message` key, that string becomes
+  B's user turn.
+- **Since 2.4.104 the SDK ALSO renders A's other structured fields** as a
+  labelled `UPSTREAM HANDOFF CONTEXT` system block — so B sees BOTH the user
+  message and A's yields (intent_brief, prepared actions, ids). This is the
+  "read both" behaviour.
+- Before 2.4.104, only `user_message` rendered and A's other fields were
+  silently dropped from the prompt (present in `input_data`, invisible to the
+  model). Teams worked around it with `@compose` shapers that crammed everything
+  into `user_message` text — which *itself* triggered the short-circuit. On
+  2.4.104+ those shapers are redundant; you can delete them.
+
+**Do this:**
+- On 2.4.104+, DON'T hand-embed upstream fields into `user_message`. Let the
+  SDK render them. If you have legacy shapers doing this, remove them (verify
+  with the acceptance test below).
+- Use `@compose` only when a target genuinely needs a *different shape* than
+  the raw output — not to make fields "visible."
+- Transport/plumbing fields (`tenant_id`, `device_id`, `session_id`, …) are
+  rendered as a compact `(routing metadata — do not echo …)` line, not as
+  content, so the model won't copy them into its yields.
+
+**Acceptance test (prove it end-to-end):** chain two agents, plant a sentinel
+string in a NON-`user_message` yield of the upstream agent, and grep the
+downstream agent's built prompt (its `LLM Input` in the trace) for the
+sentinel. Present = working.
+
+---
+
+## 3. `yields` shapes — declare item/field types or the model guesses
+
+**Trap A — bare array:** you declare `tasks: "array"` and the model returns
+`["find_doc", "upload"]` (bare strings) instead of task objects.
+
+**Why:** schema-consuming providers reject an array with no element type, so the
+SDK fills in `items: {type: string}` — which *tells the model to return
+strings*. Since 2.4.102 the SDK **warns** when it guesses this.
+
+**Do this — declare the shape:**
+```yaml
+yields:
+  tasks:
+    type: "array"
+    items:
+      type: "object"
+      fields:
+        step: "number"
+        action: "string"
+        target: "string"
+```
+
+**Trap B — dict-shaped yields were unvalidated (pre-2.4.101):** an
+array-of-objects contract used to silently accept an array of strings. Since
+2.4.101 dict-shaped `yields` are validated recursively (item types, nested
+fields, presence). `enforce_yields: true` + `enforce_yields_retry: N` makes it
+a hard contract with self-correction.
+
+**Flat/scalar yields** (`is_multistep: boolean`, `summary: string`) always
+worked and are the safe default.
+
+---
+
+**Nullable fields:** any yields declaration may add `nullable: true` (2.4.104)
+to accept an explicit null. If a field is legitimately null sometimes, DECLARE
+it nullable — do not leave it undeclared, and do not let the prompt mandate
+null for a non-nullable field (the SDK detects that conflict and skips the
+doomed reflection retry, telling you which to fix).
+
+---
+
+## 4. Structured output is IDENTICAL across providers (2.4.103)
+
+**Trap:** you assume Gemini/Anthropic/Bedrock enforce a hard native schema while
+OpenAI is "looser," and design around that difference.
+
+**Why/what changed:** as of 2.4.103 EVERY provider uses the same enforcement
+path — basic JSON mode (no native schema), the `yields` keys in the prompt, and
+the SDK's own validation + reflection retry. An agent behaves the same whichever
+model runs it. Don't rely on provider-specific structured-output behaviour; there
+isn't any on the `yields` path.
+
+---
+
+## 5. Gemini: thinking is ON by default and eats your token budget
+
+**Trap:** a Gemini agent (esp. the Manager) returns empty or mid-sentence
+truncated JSON intermittently.
+
+**Why:** Gemini 2.5/3.x think by default and thought tokens count against
+`max_tokens`. A small budget (e.g. the Manager's default ~1200) can be consumed
+entirely by thinking → empty or truncated output. Since 2.4.101 the SDK reserves
+headroom and fails MAX_TOKENS truncation loudly, but tight budgets still hurt.
+
+**Do this:** give Gemini agents generous `max_tokens` (4000–8000), and set
+`max_tokens` under the `manager:` block if the Manager runs on Gemini.
+
+---
+
+## 6. Image generation (2.4.104) — native `llm`, all image-capable providers
+
+**What:** an agent whose model is an image model (`gemini-3-pro-image`,
+`gemini-2.5-flash-image`, `gpt-image-1`, `dall-e-3`, `imagen-*`, Titan/SDXL on
+Bedrock) — or which sets `output_modality: image` — generates images natively,
+with real token/cost tracking. Images arrive on the response's `media` list
+(`{mime_type, data (base64) | url, creative_id}`) and surface to your agent as
+`llm_response["media"]`; a `media.generated` audit event fires.
+
+**Supported:** Google, Vertex (Imagen), OpenAI (/images endpoint), Bedrock
+(Titan/SDXL). **Not supported:** Anthropic (no image API — the SDK rejects it at
+start() rather than silently make a text call).
+
+**Do this:** point the agent at an image model; no other config needed. Live-
+verified on Google; validate other providers in your own environment first.
+
+---
+
+## 7. `discover()` binding is by NAME — a mismatch is silent dead code
+
+**Trap:** you create `agency/foo_agent.py` but the function inside doesn't match
+a declared agent name, so nothing binds and the agent runs as pure-YAML (raw
+LLM output, no Python).
+
+**Why:** `discover()` maps a file's function to an agent by name. No match =
+nothing bound.
+
+**Do this:** name the function to match the YAML agent (`foo` or `foo_agent`).
+Since 2.4.100 `discover()` warns when a `*_agent.py` binds nothing (grep for
+`none matched a declared agent`).
+
+---
+
+## 8. `schedule_followup` re-wakes an agent to finish ITS OWN work
+
+**Trap:** an agent asked to "set an alarm for 7am" schedules *itself* to wake at
+7am instead of calling its alarm tool now.
+
+**Why/rule:** `schedule_followup` is a pre-injected built-in that re-wakes the
+agent later to finish its own unfinished work — it is NOT a way to fulfil a
+user's timed request. If the user wants a timed action and the agent has a tool
+for it, the agent calls that tool NOW. (Description hardened in 2.4.96; it's not
+gated behind a flag by design.)
+
+---
+
+## 9. Per-agent monthly budgets (opt-in)
+
+`monthly_token_budget: N` / `monthly_cost_budget: N.NN` cap an agent's spend per
+calendar month. `budget_on_exhaust: graceful` (default) makes the agent stop
+cleanly with a `budget_exhausted` marker; `escalate` routes to the Manager. Only
+bites LLM spend (human/programmatic/external make no LLM calls).
+
+---
+
+## 10. Multi-tenancy is pass-through
+
+`X-Tenant-ID` on a request scopes that request's data + events to a tenant. The
+SDK never mints tenant ids — you pass them. `env_token` and other secrets are
+stripped from API/UI responses; never surface them.
+
+---
+
+## 11. `context` is a shared, per-turn pool — and a side channel
+
+Within ONE agent turn, the SAME `context` dict is threaded through the
+in-process stages: `@pre_compose` → your agent function → each `@chain` step.
+Whatever a stage writes, later stages read. Use it to carry data *within* a
+turn. (To carry data to the NEXT agent, use yields → `upstream_yields`, see #2.
+`context` is rebuilt every turn; it does NOT travel between agents.)
+
+**`@compose` is the exception (guaranteed-by-test since 2.4.107):** handoff
+shapers run at PUBLISH time in the mesh and receive a fresh minimal ctx
+(`session_id`, `tenant_id`, `from_agent`) — NOT the turn's context. A shaper
+that needs pool-derived data must read it from the RESULT — put it there in
+your function or a `@chain` step.
+
+**The useful pattern — pull a full set, send the LLM a subset, rejoin after:**
+the prompt is built from `input_data` + messages, NOT from arbitrary `context`
+keys. So data parked in `context` under YOUR OWN key never reaches the model:
+
+```python
+from leafmesh import pre_compose, chain
+
+def stage(input_data, context):
+    context["records"] = fetch_records(input_data["query"])   # full set → pool (not sent)
+    return {"items": [{"id": r["id"], "label": r["label"]} for r in context["records"]]}  # slim → LLM
+
+def rejoin(result, context):                                   # after the LLM answered
+    by_id = {r["id"]: r for r in context["records"]}
+    result["ranked"] = [by_id[i] for i in result.get("ranked_ids", []) if i in by_id]
+    return result
+
+@chain(rejoin)
+@pre_compose(input_processor=stage)
+async def enrichment_agent(llm_response, input_data, context):
+    return {"ranked_ids": llm_response.get("ranked_ids", []), "status": "ranked"}
+```
+
+The merge is YOUR code in a `@chain` step — the pool holds the data and threads
+it; the SDK does not auto-merge.
+
+**Trap — reserved `context` keys DO reach the prompt.** A fixed set is rendered
+into the prompt on purpose: `prepared_data`, `agent_memory`, `agent_knowledge`,
+`conversation_summary`, `conversation_history`, `previous_input`,
+`previous_output`, `agent_data`. Note `prepared_data` especially — `@pre_compose`
+processors write there by default, and it IS shown to the model. To keep
+something OUT of the prompt, stash it under a key of your own (`context["records"]`
+above), never one of these.
+
+---
+
+## 12. MCP tools do NOT go in `tools:` — and there are two different MCPs
+
+Declare the server on the agent and its tools join that agent's tool list:
+
+```yaml
+  - name: research_agent
+    agent_type: llm
+    model: gpt-4o-mini
+    mcp:
+      - url: https://mcp.example.com/sse
+        token: ${MCP_TOKEN}
+        use: [search_docs]        # omit for every tool the server publishes
+```
+
+Three ways people get this wrong:
+
+1. **Re-listing the tools under `tools:`.** `tools:` is a positive allowlist for
+   *locally registered* tools. MCP tools are merged in automatically. Naming
+   them there does nothing — and if that is the only entry, you have written an
+   allowlist that hides your local tools for no gain.
+2. **Expecting the bare tool name.** Tools arrive namespaced as
+   `<server>_<tool>` — `inventory_search`, not `search` — so two servers can
+   publish the same name safely. Conditions and metric filters must use the
+   namespaced name.
+3. **Confusing it with `framework: "mcp"`.** That is the *connector* form, where
+   the whole agent is one call to one remote tool named by `tool_name`. It still
+   exists and is occasionally right, but it is not how you give an agent a set
+   of tools. If you find yourself creating an agent per remote tool, you want
+   the `mcp:` block instead.
+
+A remote tool otherwise behaves exactly like a local one — same permission
+scoping, timeout, output guardrail and execution record, and it can run in the
+same turn as local tools, in parallel or in sequence.
+
+---
+
+## Quick "why is my agent misbehaving?" checklist
+
+| Symptom | Likely rule |
+|---|---|
+| Decorators / function "do nothing", raw LLM output routed | #1 (2-param signature) |
+| Downstream agent ignores upstream fields | #2 (handoff rendering / stale SDK < 2.4.104) |
+| Array yield comes back as strings | #3A (declare `items`) |
+| "Gemini is inconsistent / empty / truncated" | #5 (thinking eats max_tokens) or #3 |
+| Agent runs as pure-YAML unexpectedly | #7 (discover name mismatch) |
+| Agent schedules itself instead of acting | #8 (schedule_followup misuse) |
+| "Provider X behaves differently from Y" on yields | #4 (they don't — parity since 2.4.103) |
+| A handoff fired that the function's return should have prevented | Upgrade — since 2.4.106 `can_call` and `@compose` evaluate the FUNCTION's return, never the raw LLM yields |
+| Data I stashed for later "leaked" into the LLM prompt | #11 (used a reserved key like `prepared_data`) |
+| Data I put in `context` vanished at the next agent | #11 (`context` is per-turn; use yields for cross-agent) |
+| The model can't see my MCP server's tools | #12 (declare `mcp:` on the agent; don't list them in `tools:`) |
+| MCP tool calls fail with "tool not found" | #12 (tools are namespaced `<server>_<tool>`) |
+| Command Center board looks empty or generic | It designs after `design_after_runs` real runs; and it can only speak the language your yields use |
