@@ -11,12 +11,11 @@ without installing anything.
 
 ## Install
 
-Drop it into the project you're working in:
+Drop it into the project you're working in — the repo root *is* the skill
+directory, so clone it straight into `.claude/skills/leafmesh`:
 
 ```bash
-git clone https://github.com/leafcraft/leafmesh-skill.git
-mkdir -p .claude/skills
-cp -r leafmesh-skill/leafmesh .claude/skills/
+git clone https://github.com/leafcraft/leafmesh-skill.git .claude/skills/leafmesh
 ```
 
 Claude Code picks it up on the next session. To confirm, ask it something only
