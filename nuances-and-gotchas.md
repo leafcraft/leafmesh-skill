@@ -293,6 +293,48 @@ same turn as local tools, in parallel or in sequence.
 
 ---
 
+## Parallel instances (`instances: N`, 2.4.118+) — the rules that surprise people
+
+One activation → N parallel copies of the agent, same session, any trigger
+source (wake, request, handoff, mesh call, listener). Two fields only:
+
+```yaml
+finance_agent:
+  instances: 3              # 3 copies per activation
+  instances_handoff: last   # last (default) = COMBINE and route once; each = route N times
+  tools: ["claim_batch"]    # an atomic claim tool splits the backlog between copies
+```
+
+What to know before using it:
+
+- **`last` merges deterministically**: lists concatenate in instance order,
+  numbers SUM, other fields take the final copy's value, and no field any
+  copy produced is dropped. The per-copy detail rides on
+  `result._instances = {count, results: {"1": {...}, ...}, failed: [...]}`,
+  and `upstream_yields` carries the same combined payload downstream.
+- **The number-sum rule cuts both ways.** `item_count` summing is right;
+  `confidence: 0.9` from two copies becomes `1.8` — wrong. Agents whose
+  yields carry ratios/scores should reshape with `@chain`/`@compose`
+  (which receive the combined result + the `_instances` pool).
+- **Without a claim tool, copies duplicate work** — and the merge honestly
+  shows it (two identical items, count 2). That's not a bug; give the
+  copies an atomic claim (`LPOP count` / `UPDATE … SKip LOCKED RETURNING`)
+  so each pulls a disjoint batch.
+- **Don't multiply triggers**: a 3-entry `wake_up` list × `instances: 3`
+  = 9 runs. One cron line is all a fanned agent needs.
+- **`instances` ≠ `parallel`.** `parallel`/`max_concurrent` caps INCOMING
+  calls (a queue at the door); `instances` multiplies this agent's own
+  execution. Fan out with `instances`, protect the shared downstream
+  bottleneck (ERP, DB) with `parallel` on THAT agent.
+- **Conversation/chain history keeps every copy's entry** (by design —
+  the framework doesn't hide work). If the doubling bothers a prompt,
+  reshape via `@compose`.
+- History channels aside, failures stay visible: a dead copy is reported
+  per-instance AND named in `_instances.failed`; the chain still continues
+  once if any copy succeeded.
+
+---
+
 ## Quick "why is my agent misbehaving?" checklist
 
 | Symptom | Likely rule |
@@ -307,6 +349,7 @@ same turn as local tools, in parallel or in sequence.
 | A handoff fired that the function's return should have prevented | Upgrade — since 2.4.106 `can_call` and `@compose` evaluate the FUNCTION's return, never the raw LLM yields |
 | Data I stashed for later "leaked" into the LLM prompt | #11 (used a reserved key like `prepared_data`) |
 | Data I put in `context` vanished at the next agent | #11 (`context` is per-turn; use yields for cross-agent) |
+| Two copies of the same output / doubled counts downstream | `instances` without a claim tool — copies duplicated the work (see Parallel instances) |
 | The model can't see my MCP server's tools | #12 (declare `mcp:` on the agent; don't list them in `tools:`) |
 | MCP tool calls fail with "tool not found" | #12 (tools are namespaced `<server>_<tool>`) |
 | Command Center board looks empty or generic | It designs after `design_after_runs` real runs; and it can only speak the language your yields use |
