@@ -57,8 +57,9 @@ These fields apply to every agent regardless of `agent_type`.
 | `monthly_token_budget` | int | `null` | > 0 | no | Opt-in monthly token cap for this agent (auto-resets each calendar month). The gate pre-estimates each call and refuses BEFORE spending — the cap is never exceeded. Only bites LLM spend |
 | `monthly_cost_budget` | float | `null` | > 0 (USD) | no | Same as above in dollars; either cap trips the gate |
 | `budget_on_exhaust` | string | `graceful` | `graceful`, `escalate` | no | What exhaustion does: `graceful` = the agent stops cleanly with a `budget_exhausted` marker (yields filled with defaults, chain continues, no alarm); `escalate` = routed to the Manager as an error |
-| `wake_up` | string or list | `null` | cron string; OR (2.4.107+) a list of cron strings; OR a list of `{cron, input}` entries | no | Scheduled wake-up(s). Multiple schedules per agent are supported; each entry may carry its own `input` dict merged into that wake's payload |
+| `wake_up` | string or list | `null` | cron string; OR (2.4.107+) a list of cron strings; OR a list of `{cron, input, timezone}` entries | no | Scheduled wake-up(s). Multiple schedules per agent are supported; each entry may carry its own `input` dict merged into that wake's payload, and (2.4.124+) its own `timezone` overriding the agent-level one for that schedule |
 | `wake_up_input` | dict | `null` | any JSON object | no | 2.4.107+ — declared input template for scheduled wake-ups. Merged as the BASE of every wake payload (per-schedule `input` overrides it; trigger markers `wake_up_trigger`/`trigger_time` always win). Cron-woken agents receive real input instead of a bare trigger |
+| `timezone` | string | `null` (= UTC) | any IANA zone, e.g. `"Asia/Kolkata"` | no | 2.4.124+ — timezone governing this agent's `wake_up` cron schedules. **Without it, crons run in UTC** — `"0 9 * * *"` fires at 14:30 IST, not 9:00. Validated at config load (a fake zone like `Asia/Bangalore` fails boot with a clear error). Studio offers a picker fed by `GET /api/registry?category=timezones` (2.4.125+) |
 | `listen_events` | list | `[]` | list of `EventListener` entries (see [Event Listeners](#event-listeners--brd-021)) | no | Bind agent to external event sources (Kafka, SQS, MQTT, Redis Streams, IMAP). Each entry references a broker from the top-level `brokers:` block. Parallel to `wake_up` — both are agent-level trigger surfaces |
 | `yields` | dict | `{}` | key: field name, value: type string or nested object | no | Output schema — what the agent produces. Nested objects: `{type: object, fields: {...}}`; arrays: `{type: array, items: ...}`. Any declaration may add `nullable: true` (2.4.104) to accept an explicit null — declare it instead of leaving legitimately-null fields undeclared |
 | `inputs` | dict | `{}` | key: field name, value: type string or nested object | no | Input schema — what agent expects |
@@ -1930,6 +1931,7 @@ Shows which fields are **used** (U), **ignored** (—), or **required** (R) for 
 | `wake_up_input` | U | U | U | U |
 | `max_concurrent` | U | U | U | U |
 | `wake_up` | U | U | U | U |
+| `timezone` | U | U | U | U |
 | `listen_events` | U | U | U | U |
 | `yields` | U | U | U | U |
 | `inputs` | U | U | U | U |

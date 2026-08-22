@@ -167,7 +167,7 @@ agents:
       retry_delay: 2
     can_call:
       - agent: "greeter_agent"
-        condition: "not calling_agent_response.from_agent"
+        condition: "not calling_agent_response.from_agent"   # works ONLY because human agents ALWAYS emit from_agent (maybe ""). Never `not` a field that can be absent — see gotcha #14
       - agent: "processor_agent"
         condition: "calling_agent_response.from_agent == 'greeter_agent'"
 
@@ -237,6 +237,7 @@ agents:
   daily_report_agent:
     agent_type: "programmatic"
     wake_up: "0 9 * * *"           # Every day at 9 AM
+    timezone: "Asia/Kolkata"       # …9 AM IST. Omit timezone and this fires at 9 AM UTC (2.4.124+)
     communication_type: "execute"   # Fire-and-forget
 
   hourly_monitor_agent:

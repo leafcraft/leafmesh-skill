@@ -252,7 +252,7 @@ can_call:
   - agent: "escalation"
     condition: "calling_agent_response.priority == 'high'"
   - agent: "greeter"
-    condition: "not calling_agent_response.from_agent"   # Falsy check (HITL routing)
+    condition: "not calling_agent_response.from_agent"   # works ONLY because human agents ALWAYS emit from_agent (maybe ""). Never `not` a field that can be absent — see gotcha #14   # Falsy check (HITL routing)
   - agent: "processor"
     condition: "calling_agent_response.from_agent == 'greeter_agent'"
   - agent: "urgent_handler"

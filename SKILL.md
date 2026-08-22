@@ -19,9 +19,21 @@ You are an expert at building multi-agent orchestration systems with the LeafMes
 > 3. `yields: foo: "array"` makes the model return **strings** — declare
 >    `items:` to get objects.
 
+> **The direction (READ before building):**
+> **[building-agents-thoroughly.md](building-agents-thoroughly.md)** — how to build
+> an agent and a mesh *thoroughly*, where every rule has a silent failure behind
+> it: the four stages (identity-only `@pre_compose`, fail-closed `@chain`), the
+> three instruction layers (prompt / flow / Skills — and the pairing rule that a
+> duplicated playbook line *kills* the Skill), truth protocols (never collapse
+> nothing / could-not-tell / declined; a stub must announce itself), where data
+> lives, the "registered ≠ offered" verification layers, the finisher pattern, and
+> **client intake + provisioning** — including "I have no backend → Supabase". Ends
+> with the *before-you-call-an-agent-finished* checklist.
+
 ## Table of contents
 
 - [**Nuances & Gotchas (READ FIRST)**](nuances-and-gotchas.md)
+- [**Building agents & meshes thoroughly (the direction)**](building-agents-thoroughly.md)
 
 - [When the user asks you to… do this](#when-the-user-asks-you-to-do-this) — quick action table
 - [Rule 1 — A mesh is a TEAM, not a pipeline](#rule-1--a-mesh-is-a-team-not-a-pipeline)
@@ -188,7 +200,10 @@ responsibilities into its module post-processing — never the reverse
 agent can hold MULTIPLE wake_up schedules, each with its own `input`
 ({cron, input} list entries) — so cron responsibilities that share an
 agent's role no longer need to share one schedule; distinct schedules
-with distinct inputs beat one overloaded cron.
+with distinct inputs beat one overloaded cron. Since 2.4.124 crons
+run in the agent's `timezone:` (default UTC; per-entry `timezone`
+overrides per schedule) — always set it when the schedule means a
+LOCAL time of day.
 
 **What is NEVER merged — roles are not the only thing in a mesh.
 Controls stay separate at any cost:**
@@ -693,7 +708,7 @@ YAML load rejects fields that don't apply to the declared `agent_type`. Set only
 | `external` | `framework` (**required**), `connector_config` |
 | `programmatic` | `integration`; `connector_config` allowed only when `integration` is set |
 
-**Universal fields** (any type): `name`, `description`, `agent_type`, `communication_type`, `parallel`, `max_concurrent`, `wake_up`, `wake_up_input`, `yields`, `inputs`, `can_call`, `narration`, `wait_for`, `wait_for_timeout`, `auto_store_response`, `auto_store_yields`, `enforce_yields`, `enforce_yields_retry`, `memory`, `knowledge`, `skills`, `listen_events`.
+**Universal fields** (any type): `name`, `description`, `agent_type`, `communication_type`, `parallel`, `max_concurrent`, `wake_up`, `wake_up_input`, `timezone`, `yields`, `inputs`, `can_call`, `narration`, `wait_for`, `wait_for_timeout`, `auto_store_response`, `auto_store_yields`, `enforce_yields`, `enforce_yields_retry`, `memory`, `knowledge`, `skills`, `listen_events`.
 
 **Do not set `is_human_powered` manually** — it's auto-derived from `agent_type` and is silently overwritten by the validator.
 
@@ -746,7 +761,7 @@ agents:
 
     can_call:
       - agent: "greeter_agent"
-        condition: "not calling_agent_response.from_agent"
+        condition: "not calling_agent_response.from_agent"   # works ONLY because human agents ALWAYS emit from_agent (maybe ""). Never `not` a field that can be absent — see gotcha #14
       - agent: "processor_agent"
         condition: "calling_agent_response.from_agent == 'greeter_agent'"
 
@@ -778,7 +793,7 @@ agents:
     # NO webhook_config, NO channels — they're ignored on this interface
     can_call:
       - agent: "greeter_agent"
-        condition: "not calling_agent_response.from_agent"
+        condition: "not calling_agent_response.from_agent"   # works ONLY because human agents ALWAYS emit from_agent (maybe ""). Never `not` a field that can be absent — see gotcha #14
       - agent: "processor_agent"
         condition: "calling_agent_response.from_agent == 'greeter_agent'"
     yields: {request_data: "object"}
@@ -797,7 +812,7 @@ agents:
     # NO webhook_config, NO channels
     can_call:
       - agent: "greeter_agent"
-        condition: "not calling_agent_response.from_agent"
+        condition: "not calling_agent_response.from_agent"   # works ONLY because human agents ALWAYS emit from_agent (maybe ""). Never `not` a field that can be absent — see gotcha #14
     yields: {request_data: "object"}
     inputs: {user_message: "string"}
 ```
@@ -937,6 +952,7 @@ agents:
     parallel: true                 # Parallel execution
     max_concurrent: 3              # Max concurrent invocations
     wake_up: "0 9 * * *"          # Cron schedule
+    timezone: "Asia/Kolkata"       # 2.4.124+ — cron zone; OMIT = UTC (9:00 UTC != 9:00 local!)
     optimization_strategy: "performance"  # performance | cost | speed
 
     # Structured output — force LLM to respond with valid JSON schema
@@ -1067,7 +1083,7 @@ can_call:
   - agent: "escalation"
     condition: "calling_agent_response.priority == 'high'"
   - agent: "greeter"
-    condition: "not calling_agent_response.from_agent"   # Falsy check
+    condition: "not calling_agent_response.from_agent"   # works ONLY because human agents ALWAYS emit from_agent (maybe ""). Never `not` a field that can be absent — see gotcha #14   # Falsy check
   - agent: "processor"
     condition: "calling_agent_response.from_agent == 'greeter_agent'"
   - agent: "default"
@@ -1439,6 +1455,7 @@ async def my_agent(llm_response, input_data, context):
 
 ## Additional Resources
 
+- **[building-agents-thoroughly.md](building-agents-thoroughly.md)** — **The direction — how Claude should build an agent and a mesh thoroughly.** Read alongside `agency-development.md`. Part A: the agent, built thoroughly (four stages, three instruction layers + the pairing rule, tools/identity-from-code, truth protocols, where data lives, the registered/permitted/offered/called verification layers, boundary-shipping, and the finished-agent checklist). Part B: the mesh, from the expense-reimbursement pod (coordinator + specialists + finisher, one-human-one-agent-one-system, default-deny, WORM, the finisher pattern). Part C: **client intake + provisioning** — inventory → membership bar → cast → connectors → **"no backend → provision Supabase"** (identity/domain/ledger/storage mapping) → controls + verification.
 - **[agency-development.md](agency-development.md)** — **The method for building a whole agency (template) end-to-end.** Read this FIRST when starting or elevating a template: the seven first principles, the nine-phase process (story → cast roles → draw flow → YAML-vs-Python → decorators → connectors → controls → verify → document), the agent-type & decorator decision tables, the mesh boundary for external parties, the verification doctrine (config-load ≠ runtime proof), the adversarial self-check, and the anti-patterns. SKILL.md tells you which field does what; this tells you how to think and in what order.
 - **[agent-config-fields.md](agent-config-fields.md)** — **Authoritative field reference for every YAML field**. Lists every option for every agent type (`llm`, `human`, `external`, `programmatic`), plus `WebhookConfig`, `ChannelConfig`, `Memory`, `EscalationConfig`, `EscalationTarget`, `LeafMeshConfig`, `ManagerConfig`, `MeshConfig` (Bedrock / Vertex / Foundry / Local), `RedisConfig`, `EvolutionConfig`, `DataStructure`, `Entry Points`, all per-framework `connector_config` schemas, and the **Field Applicability by Agent Type** matrix. Read this file when in doubt about any field, accepted values, default, or what's allowed where.
 - **[reference.md](reference.md)** — SDK Python API (`sdk.start()`, `sdk.mesh_call()`, `@global_tool`, decorators, error classes, env vars, etc.).

@@ -293,6 +293,68 @@ same turn as local tools, in parallel or in sequence.
 
 ---
 
+## 13. `wake_up` crons run in UTC unless you declare a `timezone` (2.4.124+)
+
+A cron with no timezone is pinned to **UTC** — deliberately, so a laptop
+and a server never drift apart. The classic failure: an agent written
+with `"0 9 * * *"` expecting a 9 AM local pass actually fires at 14:30
+IST, and the operator concludes "wake-ups don't work".
+
+```yaml
+agents:
+  coordinator:
+    timezone: "Asia/Kolkata"        # governs ALL of this agent's crons
+    wake_up:
+      - cron: "0 9 * * *"
+        input: { run: "assign" }
+      - cron: "0 19 * * *"
+        timezone: "Europe/London"   # per-entry override beats agent-level
+        input: { run: "digest" }
+```
+
+- Validated at config load: a non-IANA name (`Asia/Bangalore` is the
+  classic trap — the real zone is `Asia/Kolkata`) fails boot with a
+  clear error, not silently at fire time.
+- `GET /api/registry?category=timezones` (2.4.125+) returns the exact
+  pickable zone list ({common, all, count}) — Studio's timezone inputs
+  are fed by it.
+- **Missed fires are skipped, not replayed**: if the process (or the
+  laptop) is asleep when a cron comes due, the fire is skipped once it
+  is more than the misfire grace (default 1 hour) late — you'll see
+  "Run time of job … was missed by H:MM:SS" warnings on wake. That is
+  by design: a 9 AM "assign the day's tasks" run firing at 5 PM is
+  worse than not firing. If you WANT one catch-up run on wake, set
+  `LEAFMESH_SCHEDULER_MISFIRE_GRACE_S=none` (ops env knob; coalesce
+  guarantees at most ONE catch-up per schedule).
+
+## 14. Conditions FAIL CLOSED on missing fields — and `not` does NOT rescue them
+
+A `can_call` condition that references a field **absent** from the
+producing agent's output evaluates to **false**, whatever the rest of
+the expression says. This is deliberate (a typo'd field must never
+open a route), but it has a counterintuitive corollary:
+
+```yaml
+condition: "not calling_agent_response.from_agent"
+```
+
+reads as "when there is no caller" — but if `from_agent` is MISSING
+(not empty — missing), the whole condition is false. `not x.field`
+only matches when the field is **present and falsy** (`""`, `false`,
+`0`).
+
+Rules of thumb:
+- Only reference fields the producing agent ALWAYS emits. Human agents
+  always emit the uniform reply shape (`human_message`,
+  `human_decision`, `from_agent` — possibly `""`) since 2.4.71; your
+  own LLM agents always emit their declared `yields` keys.
+- When two conditional branches target the SAME agent anyway, use one
+  unconditional edge and gate on the DOWNSTREAM agent's conditions.
+- The SDK logs `Condition ... could not be evaluated — route will NOT
+  be taken` naming the missing field, and (2.4.127+) explains the
+  `not` case inline. If a route "mysteriously never fires", search the
+  logs for that line first.
+
 ## Parallel instances (`instances: N`, 2.4.118+) — the rules that surprise people
 
 One activation → N parallel copies of the agent, same session, any trigger
