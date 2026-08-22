@@ -8,7 +8,7 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 
 You are an expert at building multi-agent orchestration systems with the LeafMesh SDK.
 
-> **SDK baseline: 2.4.107.** Before wiring or debugging agents, read
+> **SDK baseline: 2.4.131.** Before wiring or debugging agents, read
 > **[nuances-and-gotchas.md](nuances-and-gotchas.md)** — the 10 non-obvious rules
 > that cause almost every "my agent silently does nothing / the handoff looks
 > empty / Gemini behaves differently" report. The top three that bite hardest:
@@ -68,7 +68,7 @@ You are an expert at building multi-agent orchestration systems with the LeafMes
 | "Schedule an agent" | Add `wake_up: "cron expression"` to agent YAML |
 | "Debug why agent X isn't called" | Check `can_call` conditions, verify `calling_agent_response` fields match, check `communication_type` |
 | "Validate my config" | POST the config to `/api/yaml/validate` or read `configs/config.yaml` and check structure |
-| "Add a Super-Agent" / "this task needs multi-step planning + verification" | Set `super_agent: true` on an LLM agent in YAML (that bool is the only wired field; the `super_agent_*`/`synth_*` numeric knobs are advisory extras, not enforced as of 2.4.104). See [Super-Agent v3](#super-agent-v3) section. Use it when the task is genuinely multi-step (research synthesis, multi-file edits, multi-page analysis) — for one-shot tasks, plain LLM agent is faster + cheaper |
+| "Add a Super-Agent" / "this task needs multi-step planning + verification" | Set `super_agent: true` (on, defaults) or a **dict** to tune it: `super_agent: {cost_ceiling, wall_clock, synth_max_tokens, step_concurrency, …}` (2.4.123+; the dict is the only tuning path — flat `super_agent_*` keys and `LEAFMESH_SUPER_AGENT_*` env vars are dead). See [Super-Agent v3](#super-agent-v3) section. Use it when the task is genuinely multi-step (research synthesis, multi-file edits, multi-page analysis) — for one-shot tasks, plain LLM agent is faster + cheaper |
 | "Add Skills" / "give this agent reusable playbooks" | Add `skills: {sourceName: "...", enabled: true, names: [...]}` on the agent. **Local `.md` files are NOT auto-loaded** — the default source is hosted (Redis). For filesystem skills, register a source via `POST /api/skills/sources` first. See [Skills System](#skills-system) section |
 | "Retry when X fails" / "loop back to re-do upstream work" | NEVER write an unbounded retry back-edge. Add a per-session exhaustion counter in the agent's Python, yield a `*_retry_exhausted` boolean, gate the back-edge on it, add a terminal route. See [Rule 3](#rule-3--bound-every-retry-back-edge) |
 | "Use Grok or Mistral as the model" | Set `model: "grok-2"` (or `grok-3`, `grok-beta`) and `XAI_API_KEY` env var; or `model: "mistral-large"` (or `mistral-small`, `mixtral-8x22b`, `codestral-latest`) and `MISTRAL_API_KEY` env var. Both are native providers — no Bedrock/Vertex routing needed |
@@ -497,19 +497,16 @@ agents:
   research_synthesiser:
     agent_type: "llm"
     model: "claude-sonnet-4-6"
-    super_agent: true                       # the ONLY wired field — the on-switch
-    # ⚠️ The knobs below are ADVISORY EXTRAS, not declared AgentConfig fields.
-    #    AgentConfig is extra='allow', so they're accepted silently but carry NO
-    #    schema, NO enforced default, and NO validation. Verified (2.4.104):
-    #    the four *_step_cap / *_reflection_budget / synth_max_tokens_* are
-    #    referenced NOWHERE in the package; *_cost_ceiling / *_wall_clock only
-    #    on the playground surface. Setting them is a hint that may be ignored.
-    super_agent_cost_ceiling: 100000        # advisory only
-    super_agent_step_cap: 12                # advisory only (orchestrator uses internal _MAX_STEPS_RUN)
-    super_agent_reflection_budget: 2        # advisory only
-    super_agent_wall_clock: 900             # advisory only (orchestrator uses internal wall-clock)
-    synth_max_tokens_floor: 16384           # advisory only
-    synth_max_tokens_ceiling: 32768         # advisory only
+    super_agent:                            # DICT form = the tuning path (2.4.123+); the ONLY way to tune it
+      cost_ceiling: 100000                  # aggregate token budget per run (default 50000)
+      wall_clock: 900                       # per-run wall-clock seconds (default 600)
+      synth_max_tokens: 32768               # cap on the final synthesis call
+      goal_check_view_chars: 12000          # chars the goal-check phase sees (default 12000)
+      step_concurrency: 4                   # parallel plan steps when the DAG allows
+    # super_agent: true is the shorthand — on with all defaults.
+    # NOTE: the old FLAT keys (super_agent_cost_ceiling, super_agent_step_cap,
+    #       synth_max_tokens_floor, …) were never wired — do not use them; and
+    #       the LEAFMESH_SUPER_AGENT_* env vars are dead as of 2.4.131.
     prompt: |
       You are a research synthesiser. ...
     yields:
@@ -536,7 +533,7 @@ Every Super-Agent span carries an *informative* output attribute (not just `ok` 
 ### Honest caveats
 
 - Orchestration overhead is real — plan + verify + reflect are additional LLM calls per run. Don't enable for one-shot work.
-- **The numeric tuning knobs are advisory extras, not wired fields (verified as of 2.4.104).** `super_agent_step_cap`, `super_agent_reflection_budget`, `synth_max_tokens_floor`, and `synth_max_tokens_ceiling` are referenced nowhere in the package; `super_agent_cost_ceiling` / `super_agent_wall_clock` appear only on the playground schema surface. The orchestrator enforces its own internal caps (`_MAX_STEPS_RUN`, `_max_wall_clock_seconds`, `ceiling_hit`). So do **not** rely on setting `synth_max_tokens_floor` to prevent Anthropic non-streaming truncation, or on `super_agent_cost_ceiling` to hard-stop a run — those behaviours are not driven by these config keys in this version. Treat the knobs as forward-looking hints.
+- **Tune with the dict form, not flat keys.** As of 2.4.123 `super_agent:` takes a bool *or* a dict, and as of 2.4.131 the **dict is the only tuning path** — `super_agent: {cost_ceiling, wall_clock, step_max_tokens, synth_max_tokens, verify_view_chars, goal_check_view_chars, step_concurrency}` (defaults: `cost_ceiling` 50000, `wall_clock` 600, `goal_check_view_chars` 12000). The old **flat** `super_agent_*` / `synth_max_tokens_*` keys were never wired, and the `LEAFMESH_SUPER_AGENT_*` env vars are dead — don't use either.
 
 ## Skills System
 
@@ -703,7 +700,7 @@ YAML load rejects fields that don't apply to the declared `agent_type`. Set only
 
 | `agent_type` | Allowed type-specific fields |
 |---|---|
-| `llm` | `model`, `prompt`, `temperature`, `max_tokens`, `max_completion_tokens`, `reasoning`, `thinking`, `reasoning_budget`, `thinking_budget` (legacy, still declared), `enable_prompt_caching`, `response_format` (accepted extra), `optimization_strategy`, `context_parts`, `tools`, `tool_choice`, `max_tool_calls_per_message`, `tool_call_timeout`, `allow_parallel_tool_calls`, `tool_categories`, `skills`, `super_agent`, `effort`, `receive_conversation_history`, `history_limit`, `stream_yield`, `llm_hard_timeout_s`, `response_overrides` — (the `super_agent_*`/`synth_*` tuning knobs are accepted only as advisory extras, not declared llm fields) |
+| `llm` | `model`, `prompt`, `temperature`, `max_tokens`, `max_completion_tokens`, `reasoning`, `thinking`, `reasoning_budget`, `thinking_budget` (legacy, still declared), `enable_prompt_caching`, `response_format` (accepted extra), `optimization_strategy`, `context_parts`, `tools`, `tool_choice`, `max_tool_calls_per_message`, `tool_call_timeout`, `allow_parallel_tool_calls`, `tool_categories`, `skills`, `super_agent`, `effort`, `receive_conversation_history`, `history_limit`, `stream_yield`, `llm_hard_timeout_s`, `response_overrides` — (tune `super_agent` via its **dict** form, e.g. `super_agent: {cost_ceiling, wall_clock, …}`, not flat `super_agent_*` keys) |
 | `human` | `human_interface`, `human_timeout_seconds`, `human_context_template`, `human_prompt_template`, `fallback_on_timeout`, `fallback_response`, `require_human_confirmation`, `human_escalation_triggers`, `operator_ids`, `webhook_config`, `channels` |
 | `external` | `framework` (**required**), `connector_config` |
 | `programmatic` | `integration`; `connector_config` allowed only when `integration` is set |

@@ -589,11 +589,11 @@ Each feed post contains:
 | `COMPOSIO_API_KEY` | For Composio | Composio key |
 | `XAI_API_KEY` | For Grok models | xAI API key |
 | `MISTRAL_API_KEY` | For Mistral models | Mistral API key |
-| `LEAFMESH_LLM_HARD_TIMEOUT_S` | No | Hard ceiling on a single LLM provider call (default **90**s; timed-out calls are retried **once** with the same ceiling, then fail; super-agent phases get 600s automatically). Raise for long-running agents that legitimately produce big outputs |
+| ~~`LEAFMESH_LLM_HARD_TIMEOUT_S`~~ | **DEAD (2.4.131)** | Moved to YAML `timeouts.llm_hard_timeout_s` (default **90**s; timed-out calls retry **once**, then fail; super-agent phases get 600s). The env var is **no longer read** — set the YAML block. Raise for long-running agents with big outputs |
 | `LEAFMESH_SKILLS_DIR` | No | Root dir for `filesystem` skill sources when no `config.root` is set (default `./skills/`) |
 | `LEAFMESH_API_PORT` | No | Mesh API port (default **18820**) |
-| `LEAFMESH_MAX_PARALLEL_TOOL_CALLS` | No | Cap on tool calls executed concurrently within one LLM step (default **8**) |
-| `LEAFMESH_SUPER_AGENT_STEP_CONCURRENCY` | No | Cap on super-agent plan steps running concurrently when the `depends_on` DAG allows it (default **4**) |
+| ~~`LEAFMESH_MAX_PARALLEL_TOOL_CALLS`~~ | **DEAD (2.4.131)** | Moved to YAML `limits.max_parallel_tool_calls` (default **8**). Env var no longer read |
+| ~~`LEAFMESH_SUPER_AGENT_STEP_CONCURRENCY`~~ | **DEAD (2.4.131)** | Now a per-agent super-agent dict key: `super_agent: {step_concurrency: N}` (default **4**). Env var no longer read |
 | `LEAFMESH_WORKERS_MODE` | No | `1` enables workers/HA mode — required for running more than one instance against one Redis (exactly-once events, singleton runners, cross-instance locks) |
 | `LEAFMESH_WORKERS` | No | Number of worker processes in workers mode |
 | `LEAFMESH_LEASE_SECONDS` | No | Singleton-runner lease window (default **30**). Raise (e.g. `120`) when Redis is remote over a flaky link so connectivity blips shorter than the window never flap leased runners; heartbeat auto-scales to a third of the window (2.4.107) |

@@ -318,15 +318,30 @@ These fields are used when `agent_type` is `"llm"`. Ignored for other types.
 | `allow_parallel_tool_calls` | bool | `true` | `true`, `false` | Allow parallel tool execution |
 | `tool_categories` | list | `[]` | category name strings | Tool categories agent can access |
 | `effort` | string | `null` | `"low"`, `"medium"`, `"high"` | v2.3.x — Claude 4.8 (Opus / Sonnet) `effort` parameter. Higher effort = deeper reasoning + more output tokens. Only applies to Anthropic Claude 4.8 family; ignored for other models. |
-| `super_agent` | bool | `false` | `true`, `false` | v2.3.x — Wrap this LLM agent in the multi-phase orchestrator (plan → execute → verify → reflect → finalize). See [Super-Agent v3 fields](#super-agent-v3-fields) below |
+| `super_agent` | bool \| dict | `false` | `true` / `false` / a tuning dict | Wrap this LLM agent in the multi-phase orchestrator (plan → execute → verify → reflect → finalize). `true` = on with defaults; a **dict** tunes it — the dict is the **only** tuning path (2.4.123+). See [Super-Agent v3 fields](#super-agent-v3-fields) below |
 | `skills` | list \| dict | `null` | `["name", …]` **or** `{sourceName, enabled, names}` | v2.3.x — Skills (reusable instruction playbooks) loaded on demand. `skills: true` (bare bool) is **rejected at YAML load** (`ValidationError`: must be a non-empty list of names, or a `{sourceName, enabled, names}` dict). See [Skills Config](#skills-config) below |
 | `receive_conversation_history` | bool | `false` | `true`, `false` | Inject prior turns of the session's conversation into this agent's context (see `history_limit`). |
 | `history_limit` | int | `20` | ≥ 0 | Max prior turns injected when `receive_conversation_history: true`. |
 | `stream_yield` | string | `null` | a yield key | Name of the yield to stream incrementally (token-by-token) to the caller/channel. |
 | `llm_hard_timeout_s` | float | `null` | seconds | Hard per-call wall-clock timeout for the LLM request; the call is aborted if exceeded. |
 | `response_overrides` | list \| dict | `null` | override rules | Post-hoc overrides applied to the LLM response (e.g. force/patch specific yields). Advanced; see the SDK reference. |
+| `skills_eager` | bool | env `LEAFMESH_SKILLS_EAGER` | `true`, `false` | (2.4.123) Ship every skill's **full body** in the prompt instead of lazily via `load_skill_reference`. Per-agent override of the fleet env default. For finer control use the per-skill `eager: [names]` sub-key of `skills:` (see [Skills Config](#skills-config)). |
+| `output_modality` | string | `"text"` | `"text"`, `"image"` | (declared field since 2.4.121) Output type for the agent. Pair `"image"` with an image-capable model and `image_options`. |
+| `image_options` | dict | `null` | provider image opts | (2.4.104, fixed 2.4.108) Options for image generation when `output_modality: "image"` (size, quality, etc.). **≥2.4.108 required** — earlier versions ran image models as TEXT turns on the mesh path (full token bill, empty content, yields failure). |
 
-> **⚠️ Super-Agent tuning knobs are advisory extras, NOT declared schema fields.** `super_agent_cost_ceiling`, `super_agent_step_cap`, `super_agent_reflection_budget`, `super_agent_wall_clock`, `synth_max_tokens_floor`, and `synth_max_tokens_ceiling` are **not** declared on `AgentConfig`. Because `AgentConfig` uses `model_config = {'extra': 'allow'}`, they are accepted silently but carry **no schema, no enforced default, and no validation** — the "defaults" some earlier docs listed (`12`, `2`, `900`…) are **not** applied by the SDK. Verified in leafmesh 2.4.33: `super_agent_step_cap`, `super_agent_reflection_budget`, `synth_max_tokens_floor`, `synth_max_tokens_ceiling` are referenced **nowhere** in the package; the orchestrator uses internal caps (`_MAX_STEPS_RUN`, `_max_wall_clock_seconds`, `ceiling_hit`). `super_agent_cost_ceiling` / `super_agent_wall_clock` appear only on the playground schema surface. **Only `super_agent: true` (bool) is a real, wired field.** Treat any knob you set as a hint that may be ignored.
+> **⚠️ Tune Super-Agent with the DICT form — not flat keys.** As of **2.4.123** `super_agent:` accepts either a bool (`true` = on with defaults) **or a dict** of tuning keys, and as of **2.4.131 the dict is the ONLY way to tune it** (the three `LEAFMESH_SUPER_AGENT_*` env vars are dead). The old **flat** keys — `super_agent_cost_ceiling`, `super_agent_step_cap`, `super_agent_reflection_budget`, `super_agent_wall_clock`, `synth_max_tokens_floor/ceiling` — were **never wired** (accepted only as `extra='allow'` and ignored); **do not use them.** Allowed **dict** keys and defaults:
+>
+> | Dict key | Default | Governs |
+> |---|---|---|
+> | `cost_ceiling` | `50000` | aggregate token budget for one run |
+> | `wall_clock` | `600` | per-run wall-clock seconds |
+> | `step_max_tokens` | — | cap per plan step |
+> | `synth_max_tokens` | — | cap on the final synthesis call |
+> | `verify_view_chars` | — | chars of context the verify phase sees |
+> | `goal_check_view_chars` | `12000` | chars the goal-check phase sees |
+> | `step_concurrency` | `4` | parallel plan steps when the `depends_on` DAG allows |
+>
+> Any key you omit takes the SDK default. `super_agent: true` is the shorthand for "on, all defaults".
 
 ### Super-Agent v3 Fields
 
@@ -337,13 +352,13 @@ agents:
   research_synthesiser:
     agent_type: "llm"
     model: "claude-sonnet-4-6"
-    super_agent: true                    # the only wired field; the rest are advisory extras (see warning above)
-    super_agent_cost_ceiling: 100000     # advisory only — NOT enforced by the 2.4.33 orchestrator
-    super_agent_step_cap: 12             # advisory only — referenced nowhere in the package
-    super_agent_reflection_budget: 2     # advisory only — referenced nowhere in the package
-    super_agent_wall_clock: 900          # advisory only — orchestrator uses its own internal cap
-    synth_max_tokens_floor: 16384        # advisory only — referenced nowhere in the package
-    synth_max_tokens_ceiling: 32768      # advisory only — referenced nowhere in the package
+    super_agent:                         # DICT form = the tuning path (2.4.123+); the ONLY way to tune it
+      cost_ceiling: 100000               # aggregate token budget for one run (default 50000)
+      wall_clock: 900                    # per-run wall-clock seconds (default 600)
+      synth_max_tokens: 32768            # cap on the final synthesis call
+      goal_check_view_chars: 12000       # chars the goal-check phase sees (default 12000)
+      step_concurrency: 4                # parallel plan steps when the DAG allows
+    # (super_agent: true is the shorthand — on with all defaults)
     prompt: |
       You are a research synthesiser. Plan the investigation, execute
       each step, verify outputs against expected outcomes, and produce
@@ -376,10 +391,15 @@ agents:
       names:                             # REQUIRED, non-empty — empty list clears the field (no skills)
         - "refund_flow"
         - "account_migration"
+        - "tone"
+      eager:                             # (2.4.123) full-body in the prompt; the rest stay lazy
+        - "tone"                         # every name here MUST appear in `names` or load fails
 
     # Shortform — routed to the "default" source (HOSTED):
     # skills: ["refund_flow", "account_migration"]
 ```
+
+> **`eager` vs lazy:** `names` are advertised in a compact index and fetched on demand via `load_skill_reference`. `eager: [...]` ships those skills' full bodies resident in the prompt — for the one skill that is *always* relevant (house tone, a policy matrix). Every `eager` name is validated against `names` at load, so a typo fails fast instead of silently delivering nothing. Fleet default is the `LEAFMESH_SKILLS_EAGER` env var; the per-agent `skills_eager: true` field forces all-eager.
 
 **Source registration is NOT in YAML** — there is no top-level `skills:`
 block (the loader rejects unknown top-level keys). Register sources via
@@ -1710,6 +1730,50 @@ mesh:
     headers:
       Authorization: "Bearer ${VLLM_API_KEY:}"
 ```
+
+---
+
+## Runtime Config Blocks (2.4.131) — `timeouts` / `scheduler` / `runtime` / `limits` / `connectors`
+
+**2.4.131 moved ~49 runtime knobs out of `LEAFMESH_*` environment variables into five declared top-level YAML blocks. The old env vars are NO LONGER READ** — a template or `.env` that still sets them silently gets defaults. These are top-level siblings of `mesh:` / `manager:`.
+
+Three rules for template authors:
+1. **Every field is optional and omission is meaningful.** Blank = "not declared" → the SDK default applies and the key stays out of the YAML. **Do NOT pre-fill these with defaults** — that writes a choice the operator never made. Declare a block only where the template genuinely needs a non-default (e.g. a long-running research agency setting `timeouts.llm_hard_timeout_s: 300`).
+2. **Booleans are tri-state:** absent / `true` / `false`, and an explicit `false` ≠ absent (it round-trips through save+reload).
+3. **Two knowledge *document* caps went per-provider, not into `limits`:** `settings.max_docs_per_ingest` (1000) and `settings.max_doc_bytes` (2 MiB) live under a knowledge provider's `settings:`.
+
+```yaml
+timeouts:                       # 8 fields
+  llm_hard_timeout_s: 90        # per LLM call; retried once then fails (super-agent phases get 600)
+  mesh_call_default_timeout_s: 300
+  super_agent_max_dispatch_s: 14400
+  # + tool-loop multiplier/cap, ack/SSE/HITL-redrive
+scheduler:                      # 7 fields
+  cron_min_interval_seconds: 60 # floor; lower it to allow sub-minute intervals like "30s"
+  misfire_grace_s: 3600
+  # + follow-up tick/max-delay/TTL, HITL reaper interval+grace
+runtime:                        # 9 fields
+  lease_seconds: 30
+  dispatch_claim_ttl_s: ...     # + pub/sub poll+ping+dead windows, reclaim_min_idle_ms, config_sync_poll_s
+limits:                         # 14 fields
+  max_parallel_tool_calls: 8
+  tool_result_max_chars: 100000
+  max_session_history_bytes: ...
+  consumer_inflight_max: 64
+  # + webhook payload/rate/replay, knowledge ingest+query caps, tool_failure_breaker
+connectors:                     # 3 fields — all default true
+  traceparent_inject: true
+  external_usage_stamp: true
+  external_trace_capture: true
+
+mesh:
+  reply_stream: false           # default false; always ON in workers mode regardless
+```
+
+**Dead env vars (no longer read — migrate to the blocks above):** `LEAFMESH_LLM_HARD_TIMEOUT_S`, `LEAFMESH_CRON_MIN_INTERVAL_SECONDS`, `LEAFMESH_WEBHOOK_{MAX_PAYLOAD_BYTES,RATE_LIMIT_MAX,RATE_LIMIT_WINDOW_S,REPLAY_SKEW_S}`, `LEAFMESH_MAX_SESSION_HISTORY_BYTES`, `LEAFMESH_MAX_PARALLEL_TOOL_CALLS`, `LEAFMESH_KNOWLEDGE_*` (all), `LEAFMESH_MESH_REPLY_STREAM`, `LEAFMESH_SUPER_AGENT_*` (→ per-agent `super_agent:` dict), `LEAFMESH_MANAGER_*_TAIL`.
+**Still legitimately env:** `LEAFMESH_LICENSE_KEY`, `LEAFMESH_ENV_TOKEN`, `WEBHOOK_SECRET`, `INTERNAL_API_KEY`, `API_URL`/`API_PORT`, `EVOLUTION_API_PORT`, `SSE_COOKIE_SAMESITE`, `WORKERS`(_MODE), `OTEL_REDACT_PII`, `DISABLE_PROMPT_GUARDRAIL`, `WEBHOOK_ALLOW_LEGACY_HMAC`, `MCP_COMMAND_ALLOWLIST`, `TEAMS_ALLOW_UNVERIFIED`, `YAML_ENV_BLOCKLIST(_EXTRA)`, `HSTS_ENABLED`, `REFERRER_POLICY`, `CSP`, `LEAFMESH_SKILLS_DIR`, `LEAFMESH_SKILLS_EAGER`.
+
+> ⚠️ **The `timeouts` block is REJECTED by ≤2.4.130** (`from_yaml` raises `ConfigError`) — it is only valid on **2.4.131+**. Ship these blocks only when the template floor is `leafmesh>=2.4.131`.
 
 ---
 

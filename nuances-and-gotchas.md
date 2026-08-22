@@ -1,6 +1,6 @@
 # LeafMesh — Nuances & Gotchas (READ FIRST)
 
-**SDK baseline: 2.4.107.** This file captures the non-obvious rules that cause
+**SDK baseline: 2.4.131.** This file captures the non-obvious rules that cause
 real, hard-to-debug failures. Most "my agent silently does nothing" or "the
 handoff looks empty" or "Gemini behaves differently from GPT" reports trace to
 exactly one item below. Read this before wiring agents.
@@ -354,6 +354,75 @@ Rules of thumb:
   be taken` naming the missing field, and (2.4.127+) explains the
   `not` case inline. If a route "mysteriously never fires", search the
   logs for that line first.
+
+## 15. Tool exposure follows REGISTRATION, and playbook/MCP registries are now per-agent (2.4.129 / 2.4.130)
+
+`tools:` is only for tools **you** wrote. `playbook:` / `mcp:` / `zapier` /
+`composio` / `n8n`, `memory: true` (→ `recall_memory`), `knowledge:` (→
+`query_knowledge`), `super_agent:` (→ planner tools) **all attach from their own
+config block** — you do NOT list them in `tools:`.
+- **≤2.4.128:** those merges were gated by the explicit `tools:` allowlist, so a
+  declared block registered and was **never offered** if the agent also set
+  `tools:`. Field case: 33 playbook sections across 6 agents, model saw none.
+  Fixed in 2.4.129 — exposure now follows registration, not a request-time key.
+- **≤2.4.129:** every agent's `playbook` registered a tool literally named
+  `playbook`, all fighting for **one registry slot** — **the last agent to boot
+  won**, so which agent had a working playbook depended on boot order (proven by
+  flipping the order). **2.4.130 scopes the registry per agent.** A multi-agent
+  template with per-agent playbooks **REQUIRES `leafmesh>=2.4.130`** — no config
+  workaround exists.
+- Related **2.4.128:** one logical event could reach local subscribers multiple
+  times (pubsub self-echo / PEL redelivery); a Slack reply once fired a downstream
+  agent 3×. Now de-duplicated per `event_id`.
+
+## 16. `max_tool_calls_per_message` defaults to 5 and TRUNCATES SILENTLY
+
+A chain that needs 7 tool calls stops at 5 — **no error, plausible answer, work
+that never happened.** It looks exactly like the model deciding not to bother.
+"Tool iteration 5 complete" in the logs = hit the cap, not a choice. Raise it on
+any agent with a long read/act chain; **20 is the hard ceiling** (the SDK rejects
+higher). This is the quietest "my agent did half the job" bug.
+
+## 17. `dual` → `dual` `can_call` is unbounded ping-pong (2.4.126, now warned)
+
+A `dual` agent calling **another** `dual` agent bounces replies back and forth
+**independent of `can_call` conditions** — field case: 13 LLM calls from one
+inbound message. The SDK warns at load as of 2.4.126. **`dual` belongs on the
+human/webhook boundary agent only; downstream peers must be `chain`.** If a
+template uses `dual`, put this rule in the comment right above it.
+
+## 18. `enforce_yields` makes EVERY declared yield required — no conditional marker
+
+There is no "this yield only applies to lane X" marker. A yield that only some
+turns produce fails the contract on **every** unrelated turn and escalates twice
+per turn. **Workaround: declare the lane-specific yield with a default** in the
+output contract so the contract is always satisfiable.
+
+## 19. 2.4.131 migration + packaging — silent reverts and uninstallable extras
+
+- **Env → config silent revert (2.4.131):** ~49 runtime knobs moved from
+  `LEAFMESH_*` env vars into the `timeouts`/`scheduler`/`runtime`/`limits`/
+  `connectors` YAML blocks (see agent-config-fields.md). The SDK does **not** warn
+  — a still-set env var is simply ignored and the default applies. Notably
+  `LEAFMESH_LLM_HARD_TIMEOUT_S` → `timeouts.llm_hard_timeout_s`, and the default
+  dropped **300s → 90s**. The `timeouts` block is **rejected by ≤2.4.130**, so it
+  must land *with* the 2.4.131 floor, never before.
+- **`pip install leafmesh` is core + LLM providers only.** Channels, listeners,
+  knowledge backends, storage, and MCP are **extras** — a bare install runs with
+  those features silently dead. Use **`leafmesh[all]>=2.4.131`** (19 pkgs). ⚠️
+  **`[all]` does NOT install on Python 3.12+** — it pulls `cchardet`, which has no
+  wheel and fails to build. On 3.12+ install core + the specific extras you need
+  instead of `[all]`. The seven AI-framework connectors (crewai, langgraph,
+  autogen, a2a, composio, claude_agent, openai_agents) are excluded from `[all]`
+  (unsatisfiable pins) — add exactly the one a template bridges: `leafmesh[crewai]`.
+- **`_pre_compose_error`:** a raising `@pre_compose` does NOT stop the turn — the
+  try wraps the whole processor loop, so the first raise skips **all** remaining
+  processors and the agent runs with **no flows at all**. The failure is recorded
+  as `_pre_compose_error` in `context` — **read it and refuse**, rather than
+  answering for nobody.
+- **2.4.131 boot-time capability check:** declared-but-uninstalled features are now
+  reported at startup with the exact pip command — loud instead of silent, but only
+  if the operator reads it.
 
 ## Parallel instances (`instances: N`, 2.4.118+) — the rules that surprise people
 

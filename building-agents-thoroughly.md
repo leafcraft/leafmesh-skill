@@ -13,6 +13,14 @@
 > [decorators](SKILL.md#decorators--making-an-agent-self-reliant)**,
 > **flow = the prompt's sequence-with-reasons + `context_parts.flows`**,
 > **stores = `session_stash` / Redis / the domain store / the customer's system of record.**
+>
+> **Calibrate to your risk surface.** This doctrine was hardened by a user-facing
+> assistant that touches a person's phone — so it is unusually paranoid about
+> fabrication and about actuating. Take the *reasoning*, not the rules verbatim: a
+> batch pipeline with no human reading the output has different economics, and some
+> of §A5 (truth protocols) is overkill there. The reasoning is what transfers; the
+> stricter the thing an agent can reach (money, health, calendar, a send), the more
+> of this applies literally.
 
 ---
 
@@ -151,6 +159,18 @@ result told the user which briefing they got.**
 - **Fake data is tidiness until it can reach a real person.** A contact stub full
   of plausible mobile numbers feeding a real `send_sms` is a live incident waiting
   to happen. Seed data is fine *only* when it cannot actuate.
+- **One way to do one thing.** If two paths can do the same job, the **weaker one
+  silently owns whatever traffic reaches it first**. A triage agent with its own
+  `do_on_phone` tool AND a planner that dispatches device actions properly meant
+  four scenarios failed on the weak path while the planner's was untouched. Delete
+  the duplicate; the failure was never the fields, it was **ambiguity** — two ways
+  to do one job. (The same fields that failed as a dispatch tool work fine as a
+  todo list handed to the one agent that executes.)
+- **Fewer doors.** One `read_phone(kinds=[…])` that reads several sources in one
+  session beats four readers each opening its own — not for tidiness: an agent that
+  wanted a day AND notifications from two readers paid twice and, on a background
+  pass, got **two answers from two different moments with nothing saying so**.
+  Collapse N ways to read one thing into one.
 
 ### A5. Truth protocols — never say something about a person's life that isn't so
 

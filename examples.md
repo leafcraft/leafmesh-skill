@@ -534,14 +534,15 @@ agents:
     agent_type: "llm"
     model: "claude-sonnet-4-6"
 
-    # — Super-Agent on-switch + budgets —
-    super_agent: true
-    super_agent_cost_ceiling: 100000        # max aggregate token cost per run
-    super_agent_step_cap: 12                 # max executable steps
-    super_agent_reflection_budget: 2         # max reflect-then-amend cycles
-    super_agent_wall_clock: 900              # 15 min hard wall-clock
-    synth_max_tokens_floor: 16384            # protect against Anthropic non-streaming truncation
-    synth_max_tokens_ceiling: 32768          # cost protection on synthesis
+    # — Super-Agent: the DICT is the tuning path (2.4.123+); the ONLY way to tune it —
+    super_agent:
+      cost_ceiling: 100000        # aggregate token budget per run (default 50000)
+      wall_clock: 900             # per-run wall-clock seconds (default 600)
+      synth_max_tokens: 32768     # cap on the final synthesis call
+      goal_check_view_chars: 12000  # chars the goal-check phase sees (default 12000)
+      step_concurrency: 4         # parallel plan steps when the DAG allows
+    # super_agent: true = on with all defaults. The flat super_agent_* keys were
+    # never wired, and LEAFMESH_SUPER_AGENT_* env vars are dead as of 2.4.131.
 
     prompt: |
       You are a research synthesiser. Given a research question, produce a
