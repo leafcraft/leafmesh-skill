@@ -25,7 +25,7 @@ New projects don't need any of this:
 
 ```bash
 pip install create-leafmesh
-create-leafmesh create my-agency
+create-leafmesh my-agency
 ```
 
 ## What's inside
@@ -38,6 +38,7 @@ create-leafmesh create my-agency
 | `reference.md` | Config blocks, providers, listeners, deployment |
 | `examples.md` | Working agencies, end to end |
 | `agency-development.md` | Building a new agency from nothing |
+| `building-agents-thoroughly.md` | How to build an agent and design a mesh thoroughly, and how to go from "here is what I have" to a running mesh |
 
 ## Keeping it current
 
