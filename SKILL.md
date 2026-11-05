@@ -8,7 +8,7 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 
 You are an expert at building multi-agent orchestration systems with the LeafMesh SDK.
 
-> **SDK baseline: 2.4.486** (the templates pin `leafmesh>=2.4.486`; customers
+> **SDK baseline: 2.4.497** (the templates pin `leafmesh>=2.4.497`; customers
 > on PyPI are still on 2.4.418 — say so before relying on anything newer).
 > Four changes in 2.4.481–2.4.484 rewrite how you work: the configuration
 > **lives in the store**, not in `config.yaml`
@@ -25,6 +25,12 @@ You are an expert at building multi-agent orchestration systems with the LeafMes
 > from the **External agents page** (`external_agent:`); **a human seat waits
 > its time and stops** (no timeout escalation) and its **`reply_reader`** never
 > picks a route ([When nobody answers](#when-nobody-answers-24486)).
+> 2.4.487–2.4.491: the response cache keeps **lookup-only turns** (a tool can
+> say `changes_nothing`); a Super-Agent step can run **several attempts at
+> once** (`super_agent.tries`); an external agent **takes its kind from the
+> vault record** it picks; a connector with **no address is not set up**
+> (switched off, never called); a tenant can **bring its own credentials**
+> (`tenant_credentials_only`); cost by tenant comes **from telemetry**.
 >
 > Before wiring or debugging agents, read
 > **[nuances-and-gotchas.md](nuances-and-gotchas.md)** — the 10 non-obvious rules
@@ -60,7 +66,7 @@ You are an expert at building multi-agent orchestration systems with the LeafMes
 - [Rule 3 — Bound every retry back-edge](#rule-3--bound-every-retry-back-edge)
 - [How This Project Works](#how-this-project-works) · [**Where the configuration lives**](#where-the-configuration-lives-24481) · [**What applies when**](#what-applies-when-24484) · [Core SDK Pattern](#core-sdk-pattern) · [User-Facing APIs](#user-facing-apis)
 - [Agent Types](#agent-types) · [Super-Agent v3](#super-agent-v3) · [Skills System](#skills-system)
-- [**The Board, Experience & Identity**](#the-board-experience--identity) — on by default; what you must get right
+- [**The Board, Experience & Identity**](#the-board-experience--identity) — on by default; what you must get right · [Versions — draft, try, default](#versions--draft-try-default-24454)
 - [Command Center (the business board)](#command-center-the-business-board) · [Image generation](#image-generation)
 - [STRICT — fields by `agent_type`](#strict--fields-by-agent_type) · [STRICT — `human_interface` rules](#strict--human_interface-rules)
 - [Human-in-the-Loop (HITL)](#human-in-the-loop-hitl)
@@ -252,7 +258,7 @@ design. So is one where a system has a `can_call`.
 | "Run this agent on many items at once" / "cap how many run at once" | One `scaling:` block: `copies` (several copies on one job — `fixed` count, or `auto` handing out a list item by item) and `runs.max` (jobs at once across every pod). `parallel`, `max_concurrent`, `instances`, `instances_handoff` are refused at load — see [Scaling](#scaling--one-block-24484) |
 | "Add a new LLM agent" | 1. Add YAML block in `configs/config.yaml` (a new project) or in Studio's YAML editor (a running agency) 2. Create `agency/<name>_agent.py` (optional -- pure YAML works) 3. Wire `can_call` from upstream agents 4. Add entry point if needed |
 | "Add a programmatic agent" | 1. Add YAML block with `agent_type: "programmatic"` 2. If connector-only: add `integration` + `connector_config` (no Python needed) 3. If Python logic: create `agency/<name>_agent.py` 4. Wire `can_call` |
-| "Add an external agent" | 1. Set it up once on Studio's **External agents page** (framework, vault record, settings) 2. Add a YAML block with `agent_type: "external"` + `external_agent: <entry>` (2.4.486; the old `framework` + `connector_config: {connection}` still works) — no Python needed 3. Optionally add `agency/<name>_agent.py` to post-process connector result 4. Wire `can_call`. See [External agents](#external-agents--external_policy-and-budgets) |
+| "Add an external agent" | 1. Set it up once on Studio's **External agents page** (vault record, settings; the record decides the framework since 2.4.491 — name one only for a custom record: `a2a` or `custom_api`) 2. Add a YAML block with `agent_type: "external"` + `external_agent: <entry>` (2.4.486; the old `framework` + `connector_config: {connection}` still works) — no Python needed 3. Optionally add `agency/<name>_agent.py` to post-process connector result 4. Wire `can_call`. See [External agents](#external-agents--external_policy-and-budgets) |
 | "Let this agent call an HTTP API" (it has an OpenAPI / Swagger file) | Agent-level `api_tools: [entry]` after the owner uploads the file on the Tools page — **never write a tool for it**. The owner switches each endpoint on or off. See [api_tools](agent-config-fields.md#api_tools--call-an-http-api-from-its-openapi--swagger-file-24419) |
 | "Let this agent use an MCP server's tools" | Agent-level `mcp:` block — the server's tools join that agent's tool list. Do **not** re-list them under `tools:`. See [MCP servers as tools](agent-config-fields.md#mcp--mcp-servers-as-tools-the-normal-way) |
 | "Integrate with Zapier/n8n/Composio/MCP" | **First: this is a TOOL, not a new member.** Decide which EXISTING hire needs it and give it to that hire — `mcp:` on the agent, or `integration:`/`framework:` + `connector_config` when the hire IS only that call. Do not create an agent named after the system. See [Rule 0](#rule-0--who-is-in-the-mesh-decide-this-before-you-write-any-yaml). The generic tools `zapier_action`, `mcp_call`, `composio_action`, `n8n_workflow` and the tool category `integration` were removed in 2.4.485 (refused at load); in your own code the `n8n()` / `zapier()` / `composio()` helpers take `connection="<record>"` and refuse an inline address or key |
@@ -268,7 +274,7 @@ design. So is one where a system has a `can_call`.
 | "Limit what an external agent can reach or receive" | An `external_policy:` block on it — see [External agents](#external-agents--external_policy-and-budgets) |
 | "Debug why agent X isn't called" | Check `can_call` conditions, verify `calling_agent_response` fields match, check `communication_type` |
 | "Validate my config" | POST the config to `/api/yaml/validate`. For a running agency, read what runs with `GET /api/yaml/raw` (the store's latest version) — `configs/config.yaml` is only the first-boot seed |
-| "Add a Super-Agent" / "this task needs multi-step planning + verification" | Set `super_agent: true` (on, defaults) or a **dict** to tune it: `super_agent: {cost_ceiling, wall_clock, synth_max_tokens, step_concurrency, …}` (2.4.123+; the dict is the only tuning path — flat `super_agent_*` keys and `LEAFMESH_SUPER_AGENT_*` env vars are dead). See [Super-Agent v3](#super-agent-v3) section. Use it when the task is genuinely multi-step (research synthesis, multi-file edits, multi-page analysis) — for one-shot tasks, plain LLM agent is faster + cheaper |
+| "Add a Super-Agent" / "this task needs multi-step planning + verification" | Set `super_agent: true` (on, defaults) or a **dict** to tune it: `super_agent: {cost_ceiling, wall_clock, synth_max_tokens, step_concurrency, tries, …}` (2.4.123+; `tries` 2.4.491; the dict is the only tuning path — flat `super_agent_*` keys and `LEAFMESH_SUPER_AGENT_*` env vars are dead). See [Super-Agent v3](#super-agent-v3) section. Use it when the task is genuinely multi-step (research synthesis, multi-file edits, multi-page analysis) — for one-shot tasks, plain LLM agent is faster + cheaper |
 | "Add Skills" / "give this agent reusable playbooks" | Add `skills: {sourceName: "...", enabled: true, names: [...]}` on the agent. **Local `.md` files are NOT auto-loaded** — the default source is hosted (Redis). For filesystem skills, register a source via `POST /api/skills/sources` first. See [Skills System](#skills-system) section |
 | "Retry when X fails" / "loop back to re-do upstream work" | NEVER write an unbounded retry back-edge. Add a per-session exhaustion counter in the agent's Python, yield a `*_retry_exhausted` boolean, gate the back-edge on it, add a terminal route. See [Rule 3](#rule-3--bound-every-retry-back-edge) |
 | "Use Grok or Mistral as the model" | Set `model: "grok-4.7"` (or `grok-4.6`, `grok-4.3`, `grok-build-0.1`) and `XAI_API_KEY`; or `model: "mistral-large-4-0"` (or `mistral-small-4-0-26-03`, `codestral-2508`) and `MISTRAL_API_KEY`. Both are native providers — no Bedrock/Vertex routing needed. `grok-4`, `grok-3`, `mistral-large-2` are retired |
@@ -684,6 +690,9 @@ The SDK auto-starts a FastAPI server. These are the APIs users call to trigger w
 | GET | `/api/versions/mesh_yaml/config.yaml/{n}` | One version's full YAML text — `n` as shown in the versions list |
 | PUT | `/api/versions/mesh_yaml/config.yaml/default` | `{"version": n}` makes that version the default again: saved as a new store version, applied live on every pod |
 | GET | `/api/infra/datastore` | Infrastructure → Datastores: reachable, latency, server, settings in force, which `.env` names set them — never the address or password |
+| GET | `/api/infra/tenant-credentials` | 2.4.488 — the organisation's records a tenant may bring its own credentials for (name, provider, rows or `tenant_models`, `saved`). Never a value |
+| DELETE | `/api/infra/tenants/{tenant}` | 2.4.489 — take a tenant off the tenants list (organisation only; refused while the tenant still holds vault records of its own) |
+| GET | `/api/sessions`, `/api/sessions/{session_id}` | Each session carries `started_by` (2.4.491): `{how, via, who, requested_by, at}` — written once, display only (never routes or picks a tenant) |
 | POST | `/api/sessions/{session_id}/agents/{agent_name}/rerun` | Re-run an agent in an existing session, with optional feedback / new input |
 | GET | `/api/registry` | Canonical catalog of valid model ids, agent types, connectors, integrations, channels (with config-field schemas). Use this — don't guess model names |
 | GET | `/api/system/status` | Agency run state → `{"state": "running"\|"stopped", "stopped_by", "stopped_at"}` (2.4.390) |
@@ -786,7 +795,7 @@ When `new_input` is omitted, the SDK pulls the agent's most recent stored input 
 | Type | Use When | LLM? | Pure YAML? | Example |
 |------|----------|------|------------|---------|
 | `llm` | Need AI reasoning, generation, analysis | Yes | Yes | Conversation, research, advisory |
-| `llm` + `super_agent: true` | Multi-step task that needs planning + per-step verification + retry-once + cost ceiling + cancellation. The orchestrator wraps the LLM agent transparently — same yields, same downstream routing | Yes | Yes | Complex research synthesis, multi-file code changes, multi-page document analysis. See [Super-Agent v3](#super-agent-v3) |
+| `llm` + `super_agent: true` | Multi-step task that needs planning + per-step verification + retry-once (tunable: `tries`, 2.4.491) + cost ceiling + cancellation. The orchestrator wraps the LLM agent transparently — same yields, same downstream routing | Yes | Yes | Complex research synthesis, multi-file code changes, multi-page document analysis. See [Super-Agent v3](#super-agent-v3) |
 | `human` | Need human decisions, approvals, HITL review | No | Yes | Approval steps, chat interfaces |
 | `programmatic` | Deterministic logic, API calls, data transforms | No | Yes (with connector) | Data processing, Zapier/n8n actions |
 | `external` | Wrap existing framework (CrewAI, LangGraph, n8n, etc.) | Varies | Yes (with connector) | Framework integration |
@@ -822,7 +831,7 @@ The orchestrator runs five phases per request. Each phase emits its own span in 
 | **plan** | LLM produces a structured task plan (list of steps with `expected_outcome` per step) | Plan Store in Redis, keyed by `(session_id, agent_name, run_id)` |
 | **execute** | LLM runs each step in sequence | Scratchpad (per-run, cleared at finalize) |
 | **verify** | LLM checks each step's output against the plan's `expected_outcome` | Plan Store — step status: `done` / `soft_failure` / `failed` |
-| **retry-once** | On `soft_failure`, the orchestrator re-runs the step with failure context appended | Same step entry, `attempt_count` incremented |
+| **retry-once** | On `soft_failure`, the orchestrator re-runs the step with failure context appended. Default one retry; `super_agent.tries` (2.4.491) sets attempts at once and rounds — see [Attempts per step](#attempts-per-step--tries-24491) | Same step entry, `attempt_count` incremented |
 | **reflect** | On hard failure or budget exhaustion, the LLM reads plan + scratchpad and proposes a plan amendment | Plan Store — `mutation_history` |
 | **finalize** | LLM synthesises the final output against the original goal, honours `yields`, respects the per-agent `max_tokens` ceiling | Agent's normal output channel |
 
@@ -840,6 +849,7 @@ agents:
       synth_max_tokens: 32768               # cap on the final synthesis call
       goal_check_view_chars: 12000          # chars the goal-check phase sees (default 12000)
       step_concurrency: 4                   # parallel plan steps when the DAG allows
+      tries: {mode: auto, count: 3, rounds: 2}   # 2.4.491 — see "Attempts per step" below
     # super_agent: true is the shorthand — on with all defaults.
     # NOTE: the old FLAT keys (super_agent_cost_ceiling, super_agent_step_cap,
     #       synth_max_tokens_floor, …) were never wired — do not use them; and
@@ -851,6 +861,30 @@ agents:
       sources: "list"
       confidence: "number"
 ```
+
+### Attempts per step — `tries` (2.4.491)
+
+`super_agent: {tries: {mode, count, rounds}}` sets how hard each plan step
+tries to meet its check.
+
+- `count` (1–10, default 1): attempts started **at once** in a round. The
+  best-scored one is the round's answer.
+- `rounds` (1–10, default 2): rounds at most. Each new round gets the
+  critiques of the one before. The step stops at the first round that meets
+  its check.
+- `mode`: `fixed` (default) starts `count` attempts in every round. `auto`
+  starts **one** attempt first, and `count` at once only after a failed check.
+- Unset = `fixed`, 1, 2: one attempt and one retry with the checker's
+  critique — the behaviour before 2.4.491. `tries: 3` is short for
+  `{mode: fixed, count: 3}`. An unknown key, or a number outside 1–10, is
+  refused: the mesh does not start and the error names the setting.
+- When the rounds run out, the step keeps the **best answer of every round**,
+  never a later, worse one. It is still reported as below the bar.
+- A step with no expected outcome has nothing to check: one attempt.
+- **Cost:** each attempt is its own model call plus its own check. `count` ×
+  `rounds` multiplies the model calls per step (`count: 3, rounds: 3` can be 9
+  attempts). `cost_ceiling` and `wall_clock` still bound the whole run. Prefer
+  `mode: auto` — it pays for parallel attempts only on a step that failed.
 
 ### Two orchestration tools the Super-Agent gets
 
@@ -870,7 +904,7 @@ Every Super-Agent span carries an *informative* output attribute (not just `ok` 
 ### Honest caveats
 
 - Orchestration overhead is real — plan + verify + reflect are additional LLM calls per run. Don't enable for one-shot work.
-- **Tune with the dict form, not flat keys.** As of 2.4.123 `super_agent:` takes a bool *or* a dict, and as of 2.4.131 the **dict is the only tuning path** — `super_agent: {cost_ceiling, wall_clock, step_max_tokens, synth_max_tokens, verify_view_chars, goal_check_view_chars, step_concurrency}` (defaults: `cost_ceiling` 50000, `wall_clock` 600, `goal_check_view_chars` 12000). The old **flat** `super_agent_*` / `synth_max_tokens_*` keys were never wired, and the `LEAFMESH_SUPER_AGENT_*` env vars are dead — don't use either.
+- **Tune with the dict form, not flat keys.** As of 2.4.123 `super_agent:` takes a bool *or* a dict, and as of 2.4.131 the **dict is the only tuning path** — `super_agent: {cost_ceiling, wall_clock, step_max_tokens, synth_max_tokens, verify_view_chars, goal_check_view_chars, step_concurrency, tries}` (defaults: `cost_ceiling` 50000, `wall_clock` 600, `goal_check_view_chars` 12000). The old **flat** `super_agent_*` / `synth_max_tokens_*` keys were never wired, and the `LEAFMESH_SUPER_AGENT_*` env vars are dead — don't use either.
 
 ## Skills System
 
@@ -1074,6 +1108,44 @@ agent, or the migrate API:
 `POST /api/yaml/agents/{agent_name}/migrate` with `{to_name?, to_type?, fields?}`
 converts a human seat to AI and keeps what the person taught it.
 
+### Versions — draft, try, default (2.4.454)
+
+Everything that shapes an agent's run has versions (2.4.450): its config, the
+mesh settings, playground changes, skills, API tools, Tools-page entries,
+knowledge, connections and added models. Every run records the versions it
+used. When an agent recalls what it learned, it is told what has changed
+since, so it re-checks that part. Nothing to configure.
+
+To change a live agent, do not just overwrite it:
+
+1. **Save as draft.** `POST /api/versions/agent_config/{agent}/drafts` with
+   `{"changes": {"prompt": "..."}}` (merged over the default) or
+   `{"content": {...}}` (the whole agent), and an optional `why`. A draft is
+   kept, not run. It is checked like a save, so a bad one is refused now.
+2. **Try it once.** `POST /api/versions/try` with `{"agent": "...", "input":
+   ..., "versions": [{"kind": "agent_config", "name": "...", "version": N}]}`.
+   Or mark it first with `PUT /api/versions/agent_config/{agent}/staging
+   {"version": N}` and leave out `versions`. It is one run through the mesh's
+   own run path; every other run keeps the default. It stops at the agent's
+   answer: nothing is handed on, nothing goes on the board, nothing is learned.
+3. **Compare (2.4.458).** In Studio: Versions → Try, toggle "Compare with
+   default v<N>". In the API: add `"compare": true` to run the same task on the
+   default too, one after the other. `"inputs": [...]` (up to 10) runs several
+   tasks. Use this to change an agent's model safely.
+4. **Make it the default.** `PUT /api/versions/agent_config/{agent}/default
+   {"version": N}`. Going back is the same call with the old number.
+
+Inside an agent's try run you can swap its config, a playground version, a
+skill's text, and an API entry's switches, no-sign-in marks and base URL.
+Other items are tried on their own (2.4.458): `POST /api/versions/try
+{"kind", "name", "version", "compare"?}` calls an API once, searches
+knowledge, sends a model one tiny message, or reads a Tools-page entry's
+tools. Mesh settings cannot be tried, and an API version with another spec is
+tried only by making it the default. Knowledge, connections and added models
+cannot be switched back to an older version. Never write a secret into a
+draft: a version keeps no secrets, and a hidden value is filled from what runs
+now when the version is applied.
+
 ### Mother tongue & nationality (opt-in)
 
 ```yaml
@@ -1149,7 +1221,7 @@ YAML load rejects fields that don't apply to the declared `agent_type`. Set only
 | `external` | `external_agent` (2.4.486 — fills in the next two from the External agents page) **or** `framework` (**required** without it), `connector_config`, `external_policy` |
 | `programmatic` | `integration`; `connector_config` allowed only when `integration` is set (2.4.486: `{account: <Tools-page entry>}` picks its sign-in) |
 
-**Universal fields** (any type): `name`, `description`, `agent_type`, `communication_type`, `scaling` (2.4.484 — replaces `parallel`, `max_concurrent`, `instances`, `instances_handoff`, which are refused at load; no `copies` on a human seat, 2.4.485), `notify` (2.4.485), `wake_up`, `wake_up_input`, `timezone`, `yields`, `inputs`, `can_call`, `narration`, `wait_for`, `wait_for_timeout`, `auto_store_response`, `auto_store_yields`, `enforce_yields`, `enforce_yields_retry`, `memory`, `knowledge`, `skills`, `listen_events`.
+**Universal fields** (any type): `name`, `description`, `agent_type`, `communication_type`, `scaling` (2.4.484 — replaces `parallel`, `max_concurrent`, `instances`, `instances_handoff`, which are refused at load; no `copies` on a human seat, 2.4.485), `notify` (2.4.485), `wake_up`, `wake_up_input`, `timezone`, `yields`, `inputs`, `can_call`, `narration`, `wait_for`, `wait_for_timeout`, `auto_store_response`, `auto_store_yields`, `enforce_yields`, `enforce_yields_retry`, `memory`, `knowledge`, `skills`, `listen_events`, `tenant_credentials_only` (2.4.488 — acts on the model record and the connector's record).
 
 **Do not set `is_human_powered` manually** — it's auto-derived from `agent_type` and is silently overwritten by the validator.
 
@@ -1583,6 +1655,19 @@ Every picker lists each sign-in as "Provider · record" (`GET
   own tenants never connect a vault; a tenant's credentials land in the chosen
   vault in a namespace of their own, and the tenant's credential is looked up
   first, then the customer's of the same name.
+- **A tenant can bring its own credentials (2.4.488).** `GET
+  /api/infra/tenant-credentials` (sent with the tenant's `X-Tenant-ID`) lists
+  the organisation's records a tenant may fill — pasted credentials, not
+  OAuth: the same name, the same provider, and for a custom record the same
+  rows. On a listed provider's record the organisation offers models with
+  `tenant_models`; the tenant picks one with `model` on its own record, and its
+  runs use that key and that model. An agent with `tenant_credentials_only:
+  true` never falls back: a tenant with no record of its own is stopped with
+  "this tenant has not connected <record>". Runs with no tenant are unchanged.
+  The Manager always uses the organisation's key. The tenant id is taken out
+  of what a model sees and out of the input sent to an outside agent (the
+  outbound call's `X-Tenant-ID` header still carries it). Cost by tenant comes
+  from telemetry — see [nuances #10](nuances-and-gotchas.md#10-multi-tenancy-is-pass-through).
 - **A free-form config string can point at the vault** (`request_form` values,
   a stdio MCP server's `env`): `${vault:<connection>}` is its primary secret,
   `${vault:<connection>.<field>}` one named field. Resolved where it is used,
@@ -1602,6 +1687,12 @@ Every picker lists each sign-in as "Provider · record" (`GET
   each agent, human seat or broker consumer that needs the connection is
   switched off, loudly, and its runs fail at once with the reason. Add the
   connection and it switches back on with no restart.
+- **A connector with no address is not set up (2.4.490).** An external or
+  programmatic agent whose record has no address (n8n's `webhook_url`, A2A's
+  `url`, CrewAI's `endpoint`, a custom API's `base_url`, …) is switched off at
+  start with "not set up". It is never called and never counts toward
+  quarantine. Put the address in the vault record; the agent switches back on
+  with no restart. `framework: custom` is exempt.
 - **Your own code** (a tool, a programmatic agent, a custom connector) reads a
   credential at run time — never from an env var you invented:
 
@@ -1618,6 +1709,12 @@ Every picker lists each sign-in as "Provider · record" (`GET
   Both are `async`. A connection can name the `agents` allowed to read it; any
   other agent gets `SecretNotAllowed`. A name with nothing behind it raises
   `UnresolvedVaultRef` — never an empty string.
+
+  For a service the mesh has no connector for, make an "Add custom" record
+  with service type 'Your own code' and read all its rows at once (2.4.458):
+  `rows = await connection_rows("billing-api")` (from `leafmesh`) returns
+  `{"headers", "query", "body", "base_url"}`, ready to send. Same `agents`
+  rule and the same errors as `secret()`; secret rows are never logged.
 - **File credentials** (a service-account JSON, a client key, a `.p12`, a
   kubeconfig) — for a library that only takes a path, `await
   secret_file("gcp-reports.service_account_json")` returns the path of a
@@ -1670,6 +1767,8 @@ New email (no In-Reply-To, no reply token)
 Threads exist on **slack, teams, discord, email**. **telegram, cliq, whatsapp**
 have none — there each person has one continuous conversation, and a question
 asked in a Cliq room can only be answered by naming the mesh or in a DM.
+A reply in a Slack thread runs in **its session's tenant** (2.4.491): the
+tenant belongs to the session, and the person replying never sends it.
 
 **When you design a seat:** if it takes work from strangers, leave
 `operators_only` off and expect mentions. If it is an approval seat for staff,
@@ -1731,6 +1830,15 @@ agents:
 
 `represents: customer` is for a seat the public answers: their reply decides
 the request in hand and is never kept as a rule.
+
+**The receiver is told who handed it the work (2.4.487).** Every hand-off
+carries a card per sender: its name, its `description` (first 300
+characters), and for a person's seat whom it `represents` (the customer, or a
+colleague from the organisation's staff). Our agents read it in their prompt
+("WHO THIS CAME FROM"); an outside agent gets it in the call ("Handed to you
+by …"). `send_fields` still rules what else goes out. So write a real
+`description` on every agent and seat — it is how the next agent knows whom
+it is answering.
 
 ## YAML Agent Config (All Fields)
 
@@ -2040,13 +2148,15 @@ For an agent that runs tools in this process (`claude_agent`), two more keys
 every tool call against them; they only narrow the host rights.
 
 Release a quarantined agent with `POST /api/agents/{name}/release`. A cancelled
-call (its session ended) never counts toward quarantine. With `send_fields`
+call (its session ended) never counts toward quarantine, and neither does an
+agent with no address (2.4.490: it is never called — it is switched off as
+"not set up" until the address is in its vault record). With `send_fields`
 set, ONLY those fields go out — the conversation history, chain history and
 rerun note too only when you list them. A programmatic agent with an
 `integration:` is governed exactly like an external agent. A monthly budget on
-an external agent is **refused at load** when its connector reports no spend
-(`framework: custom`, n8n, zapier, mcp, a2a, …); running out of it is a
-failure, never an empty success. Full table:
+an external agent whose connector reports no spend (`framework: custom`,
+n8n, zapier, mcp, a2a, …) is metered by estimate (a cost cap needs
+`price_per_1k_tokens`); running out of it is a failure, never an empty success. Full table:
 [External Policy](agent-config-fields.md#external-policy).
 
 ### Pick it from the External agents page (2.4.486)
@@ -2066,7 +2176,17 @@ the pick that **differs** from the entry is refused. An entry that is gone
 makes the agent refuse its calls (start names it) — it never runs as
 `custom`. Custom agents are offered as **Custom: API** (`custom_api` —
 `method`, `path`, `query`, `answer_path`; the body is the agent's input) and
-**Custom: A2A**. The old `framework:` + `connector_config: {connection: …}`
+**Custom: A2A**. **The entry takes its kind from the vault record it picks
+(2.4.491).** A CrewAI record makes a CrewAI agent, and so on — leave the
+entry's `framework` out. Only a custom record needs one: `a2a` (Custom: A2A)
+or `custom_api` (Custom: API). A `framework` that contradicts the record is
+refused. `GET /api/external-agents/records` with no `framework` lists every
+record an external agent can use, each with its framework (`null` for a
+custom one). `POST /api/external-agents/from-spec` with `{spec: <file text>}`
+reads a swagger / OpenAPI file and lists the POST / PUT / PATCH operations a
+Custom API agent can be (`method`, `path`) plus the file's servers; it saves
+nothing. `framework: custom` (a Python function) is separate and unchanged.
+The old `framework:` + `connector_config: {connection: …}`
 shape still loads and runs. Tool platforms (MCP, Zapier, Composio, n8n) are
 not on this page — they are Tools-page entries; a programmatic agent's
 `integration` picks one with `connector_config: {account: <entry>}`.
@@ -2473,6 +2593,17 @@ but **does nothing**: the tool runs, and the SDK logs a warning once. If a perso
 must sign off before a tool runs, route the work through a human agent before
 the agent that calls it ([Approval is routing](#approval-is-routing)).
 
+**`changes_nothing=True` (2.4.491)** on `@tool(...)` / `@global_tool(...)`
+(a class tool: `CHANGES_NOTHING = True`; a `zapier` / `composio` / `n8n`
+block: `changes_nothing: true`) says the tool only looks things up. A turn
+whose tools all change nothing may be stored in the response cache and
+replayed **without running its tools**. Mark only a tool whose answer also
+does not depend on **when** it ran — a policy table, a rate card, static
+reference data. A read of live data (an invoice's status, stock levels, a
+queue to claim from) stays off: a replay would give a stale answer. Sending,
+writing, claiming work or reading the clock is never `changes_nothing`. See
+[nuances → the response cache](nuances-and-gotchas.md#memory-experience-and-the-response-cache-24486).
+
 ## Manager (Coordination + Escalation)
 
 ```yaml
@@ -2560,6 +2691,28 @@ are not offered. **Fast and cheap:** `gpt-6-luna`, `claude-haiku-5-5`,
 `claude-fable-5-1`, `gemini-4-argon`, `grok-4.7`. Costs follow how each
 vendor bills: size tiers for long prompts, dated price changes, DeepSeek
 off-peak; a model with no published price reports "cost unknown".
+
+**A model on your own server is added once (2.4.458).** Never invent a model
+name and hope it routes. First make its vault record: an "Add custom" record
+with service type 'Model', the server's address as its base URL and any key as
+a header row. Then add it on the Models page, or with `POST /api/models
+{name, server: {interface, timeout?}, connection, model_id?, label?, query?,
+price_id?}`. `interface` is how the server is spoken to: `vllm`, `sglang`,
+`ollama`, `llamacpp`, `lmstudio`, `tgi`, `localai`, `triton`,
+`openai_compatible`, … (`GET /api/models/interfaces`). After that, write its
+`name` in `model:` like any other. Since 2.4.460 the Models page holds only
+your own servers: `runs_on` is always `server`, and an `endpoint` in `server`
+is refused (the address lives in the record). A provider's own models need
+only its key. `POST /api/models/{name}/test` sends one tiny message.
+
+**Model prices are price records, never config.yaml (2.4.457).** A record
+(`POST /api/pricing {name, kind?, input, output, cache_read?, cache_write?,
+note?, models?}`, USD per 1M tokens, `kind` `chat` or `embedding`) is tagged
+to models, and one record can price many. An untagged model uses the SDK's
+standard price. `GET /api/pricing/standard?used=true` shows each model the
+agents use, its price, and where it comes from: `record`, `vendor`
+(OpenRouter reports each call's cost), `standard`, or `unknown`. An `unknown`
+model shows "cost unknown", never $0 — tag a record to it.
 
 ## Building New Agents -- Step by Step
 

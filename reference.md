@@ -375,7 +375,13 @@ write only `external_agent: <entry>` on the agent; the mesh fills in
 `framework` and `connector_config`. A different `framework` /
 `connector_config` beside it is refused. The per-framework shapes below still
 load and run as written. A custom agent is `custom_api` (`method`, `path`,
-`query`, `answer_path`; the body is the agent's input) or `a2a`.
+`query`, `answer_path`; the body is the agent's input) or `a2a`. **2.4.491:**
+the page entry takes its framework from the vault record it picks — name one
+only for a custom record (`a2a` / `custom_api`); one that contradicts the
+record is refused. `POST /api/external-agents/from-spec` reads a swagger /
+OpenAPI file for a Custom API agent. A connector whose record has no address
+is "not set up" (2.4.490): switched off at start, never called, never
+quarantined.
 
 ### CrewAI
 ```yaml
@@ -538,7 +544,7 @@ from leafmesh import pre_compose, zapier, mcp, composio, n8n
 @pre_compose(
     context_processor=zapier(action="slack_send", connection="zapier-main"),
     # or: composio(action="GMAIL_SEND", connection="composio-main"),
-    # or: mcp("http://localhost:3000", "search"),
+    # or: mcp("search", connection="search-mcp"),   # 2.4.497: a Tools record
     # or: n8n(connection="n8n-orders"),
     # callback mode: n8n(connection="n8n-orders", mode="callback", callback_timeout=120),
 )
@@ -555,7 +561,15 @@ from a vault record** named with `connection=` (Infrastructure → Integrations 
 key written in code — `n8n("https://…")`, `webhook_url=`, `auth_token=`,
 `api_key=`, `mcp_key=` — raises `ValueError` when the helper is created, naming
 the record to make. The record is read at the first call, inside a started
-mesh (outside one it raises). `mcp()` is unchanged.
+mesh (outside one it raises).
+
+**Since 2.4.497 `mcp()` works the same way:** `mcp("tool_name",
+connection="<Tools record>")` — the record holds the server's address and
+sign-in. The old `mcp("https://…", "tool")` and an inline `auth_token=` are
+refused, naming the record to make. A local server keeps its command in code
+and its keys in the record: `mcp("tool", connection="<record>",
+transport="stdio", command="npx", args=[...])` — the record's rows become the
+command's environment variables.
 
 ## Event Listeners (BRD-021) — agents fired by external events
 

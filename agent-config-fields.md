@@ -2,7 +2,7 @@
 
 This document lists every configuration field, its type, default value, and accepted values. Use this to build frontend forms, dropdowns, and validation.
 
-**SDK baseline: 2.4.486** (templates pin `leafmesh>=2.4.486`). The fields below make up the agency's configuration document, which **lives in its store** since 2.4.481 — `configs/config.yaml` is only imported on the first boot; after that it is changed in Studio or through the config API, and a saved setting applies without a restart ([When a saved setting applies](#when-a-saved-setting-applies-24484)).
+**SDK baseline: 2.4.497** (templates pin `leafmesh>=2.4.497`). The fields below make up the agency's configuration document, which **lives in its store** since 2.4.481 — `configs/config.yaml` is only imported on the first boot; after that it is changed in Studio or through the config API, and a saved setting applies without a restart ([When a saved setting applies](#when-a-saved-setting-applies-24484)).
 
 ---
 
@@ -49,13 +49,13 @@ These fields apply to every agent regardless of `agent_type`.
 | Field | Type | Default | Accepted Values | Required | Description |
 |-------|------|---------|-----------------|----------|-------------|
 | `name` | string | — | any string | **yes** | Unique agent name within the mesh |
-| `description` | string | `null` | any string | no | Agent description and purpose |
+| `description` | string | `null` | any string | no | Agent description and purpose. **2.4.487:** the agent it hands work to is told who sent it — name, this description (first 300 characters) and, for a seat, whom it `represents` — in its prompt, or in the call for an outside agent. Write a real one |
 | `agent_type` | string | `"llm"` | `llm`, `human`, `programmatic`, `external` | no | Agent execution type (see note below) |
 | `communication_type` | string | `"dual"` | `dual`, `chain` | no | `dual`: answers its caller and continues down `can_call` (the human / webhook boundary agent). `chain`: the caller waits for this agent's answer (every peer behind the boundary). `execute` is a deprecated alias — read as `chain` (`dual` on a human seat) with a warning; write `chain` |
 | `scaling` | object | `{runs: {}, copies: {mode: fixed, count: 1, max: 10, handoff: last}}` | see [scaling](#scaling--how-an-agent-runs-in-parallel-24484) | no | **How this agent runs in parallel — one block (2.4.484).** `runs.max`: at most N of this agent's jobs at once across ALL pods. `copies`: several copies on ONE job, results combined. Replaces `parallel`, `max_concurrent`, `instances`, `instances_handoff` |
 | ~~`parallel`~~, ~~`max_concurrent`~~, ~~`instances`~~, ~~`instances_handoff`~~ | — | — | — | — | **Refused at load since 2.4.484**, with the `scaling:` lines to write. Left at their old defaults (`false` / unset / `1` / `last`) they are dropped quietly |
 | `notify` | object | `null` | `{webhook: <name>, when: done\|failed\|both}` | no | **Post this agent's output to a webhook when it finishes (2.4.485; 2.4.486 form).** See [notify](#notify--post-the-output-to-a-webhook-24485) |
-| `monthly_token_budget` | int | `null` | > 0 | no | Opt-in monthly token cap for this agent (auto-resets each calendar month). The gate pre-estimates each call and refuses BEFORE spending — the cap is never exceeded. Checked before each model call and each external-agent call (the connector's reported spend counts). Inert on human and programmatic agents. The agent is told on every call where it stands against an even pace for the month, so it paces itself instead of spending it in two days. On an external agent whose connector reports no spend (`framework: custom`, `n8n`, `zapier`, `mcp`, `a2a`, …) the config is **refused at load** — a cap that could never stop it |
+| `monthly_token_budget` | int | `null` | > 0 | no | Opt-in monthly token cap for this agent (auto-resets each calendar month). The gate pre-estimates each call and refuses BEFORE spending — the cap is never exceeded. Checked before each model call and each external-agent call (the connector's reported spend counts). Inert on human and programmatic agents. The agent is told on every call where it stands against an even pace for the month, so it paces itself instead of spending it in two days. Ahead of that pace it runs in **lean mode** (2.4.457): every task still runs, each with one normal task's share, and the owner gets a daily Inbox notice. Separately, every LLM task has a ceiling learned from the agent's last normal tasks (about 4× a typical one, once 10 are known); at the ceiling the task answers from what it has. Neither has a field — do not invent one. On an external agent whose connector reports no spend (`framework: custom`, `n8n`, `zapier`, `mcp`, `a2a`, …) the spend is estimated: each call reserves the last call's spend, tokens are estimated from what is sent and received; a cost cap there needs `price_per_1k_tokens` |
 | `monthly_cost_budget` | float | `null` | > 0 (USD) | no | Same as above in dollars; either cap trips the gate |
 | `budget_on_exhaust` | string | `graceful` | `graceful`, `escalate` | no | What exhaustion does: `graceful` = the agent stops cleanly with a `budget_exhausted` marker (yields filled with defaults, chain continues, no alarm); `escalate` = routed to the Manager as an error |
 | `id` | string | generated | any stable string | no | The agent's permanent identity. Memory, experience and channel bindings hang off it, not off `name`. Generated and kept at first boot when omitted |
@@ -216,7 +216,7 @@ Values can be a simple type string (flat field) or a nested object definition.
 | `"string"` | Text value |
 | `"number"` | Numeric value |
 | `"boolean"` | True/false |
-| `"list"` | Array/list — of **text items**. On an LLM agent, a list with no item type, at any depth, is a **warning** at start and in `/api/yaml/validate` (2.4.486): the model is told to write text items. Declare it as `{type: array, items: string}`, or for objects `{type: array, items: {type: object, fields: {...}}}`. Use `array`, not `list`, in the dict form: only `array` reaches the model's output hint and the JSON schema (`llm/prompt_builder.render_yield_type`, `_executor_provider_mixin._yields_type_to_schema`); `{type: list, …}` is sent as an object |
+| `"list"` | Array/list — of **text items**. On an LLM agent, a list with no item type, at any depth, is a **warning** at start and in `/api/yaml/validate` (2.4.486): the model is told to write text items. Declare it as `{type: array, items: string}`, or for objects `{type: array, items: {type: object, fields: {...}}}`. Write `array` in the dict form. Since 2.4.487 `{type: list, items: …}` is read as `array` everywhere too (the model's output hint and the JSON schema; before, it was sent as an object), but `array` is the one form every version reads the same |
 | `"object"` | Dictionary/object (unstructured) |
 
 **Nested fields** — value is an object with `type` and `fields`:
@@ -382,6 +382,7 @@ These fields are used when `agent_type` is `"llm"`. Ignored for other types.
 |-------|------|---------|-----------------|-------------|
 | `model` | string | **none — declare it** | see [Model List](#model-list) below | LLM model name. No default since 2.4.135 — the SDK never picks one for you. Non-LLM agents need none. **Read the note below: nothing stops you booting without it.** |
 | `model_connection` | string | `null` | a model record's name | **2.4.486.** Which vault sign-in this agent's model calls use when there is more than one for its provider (`openai-prod` / `openai-dev`). Unset: the provider's own record. A missing record, one of another provider, or one with no key fails the call naming the record — never another key. Bedrock / Vertex / Foundry read it as a cloud identity |
+| `tenant_credentials_only` | bool | `false` | `true`, `false` | **2.4.488 (any agent type).** When a run carries a tenant id, use only that tenant's own credentials: its model record (and the `model` it picked from the organisation's `tenant_models`) and its record of the name this agent's `connector_config` picks. A tenant with none is stopped with "this tenant has not connected <record>" — never the organisation's. Runs with no tenant use the organisation's records as normal. The Manager always uses the organisation's key. See [SKILL.md → Vault references](SKILL.md#vault-references-your-own-code-and-file-credentials) |
 | `prompt` | string | `null` | any string (multiline supported) | System prompt |
 | `temperature` | float | `0.1` | `0.0` – `2.0` | LLM temperature (creativity/randomness). One default everywhere since 2.4.485 — some run paths used to fall back to 0.3 |
 | `max_tokens` | int | `800` | 1 – model max | Max output tokens (legacy models). One default everywhere since 2.4.485 — some run paths used to fall back to 300 |
@@ -410,7 +411,7 @@ These fields are used when `agent_type` is `"llm"`. Ignored for other types.
 | `allow_parallel_tool_calls` | bool | `true` | `true`, `false` | Allow parallel tool execution |
 | `tool_categories` | list | `[]` | category name strings | Tool categories agent can access. `integration` is **refused** since 2.4.485 (its four generic tools were removed) |
 | `effort` | string | `null` | `"low"`, `"medium"`, `"high"` | v2.3.x — Claude 4.8 (Opus / Sonnet) `effort` parameter. Higher effort = deeper reasoning + more output tokens. Only applies to Anthropic Claude 4.8 family; ignored for other models. |
-| `super_agent` | bool \| dict | `false` | `true` / `false` / a tuning dict | Wrap this LLM agent in the multi-phase orchestrator (plan → execute → verify → reflect → finalize). `true` = on with defaults; a **dict** tunes it — the dict is the **only** tuning path (2.4.123+). See [Super-Agent v3 fields](#super-agent-v3-fields) below |
+| `super_agent` | bool \| dict | `false` | `true` / `false` / a tuning dict | Wrap this LLM agent in the multi-phase orchestrator (plan → execute → verify → reflect → finalize). `true` = on with defaults; a **dict** tunes it — the dict is the **only** tuning path (2.4.123+); `tries` (2.4.491) sets attempts per step. See [Super-Agent v3 fields](#super-agent-v3-fields) below |
 | `skills` | list \| dict | `null` | `["name", …]` **or** `{sourceName, enabled, names}` | v2.3.x — Skills (reusable instruction playbooks) loaded on demand. `skills: true` (bare bool) is **rejected at YAML load** (`ValidationError`: must be a non-empty list of names, or a `{sourceName, enabled, names}` dict). See [Skills Config](#skills-config) below |
 | `receive_conversation_history` | bool | `false` | `true`, `false` | Inject prior turns of the session's conversation into this agent's context (see `history_limit`). |
 | `history_limit` | int | `20` | ≥ 0 | Max prior turns injected when `receive_conversation_history: true`. |
@@ -453,6 +454,7 @@ These fields are used when `agent_type` is `"llm"`. Ignored for other types.
 > | `verify_view_chars` | — | chars of context the verify phase sees |
 > | `goal_check_view_chars` | `12000` | chars the goal-check phase sees |
 > | `step_concurrency` | `4` | parallel plan steps when the `depends_on` DAG allows |
+> | `tries` | `{mode: fixed, count: 1, rounds: 2}` | **2.4.491.** Attempts per plan step: `count` (1–10) at once per round, up to `rounds` (1–10) rounds, each new round given the last one's critiques; `mode: auto` starts one attempt first and `count` only after a failed check. `tries: 3` = `{mode: fixed, count: 3}`. Unknown keys refused. The best answer of every round is kept. `count` × `rounds` multiplies model calls; `cost_ceiling` / `wall_clock` still bound the run |
 >
 > Any key you omit takes the SDK default. `super_agent: true` is the shorthand for "on, all defaults".
 
@@ -472,6 +474,7 @@ agents:
       synth_max_tokens: 32768            # cap on the final synthesis call
       goal_check_view_chars: 12000       # chars the goal-check phase sees (default 12000)
       step_concurrency: 4                # parallel plan steps when the DAG allows
+      tries: {mode: auto, count: 3, rounds: 2}   # 2.4.491: one attempt; 3 at once only after a failed check
     # (super_agent: true is the shorthand — on with all defaults)
     prompt: |
       You are a research synthesiser. Plan the investigation, execute
@@ -569,9 +572,12 @@ context_parts:
 > models as of 2.4.436), served at **`GET /api/registry`** (per-provider
 > `models` lists, plus connectors/integrations/channels). When in doubt,
 > hit the endpoint — don't guess. A model id that matches **no known
-> provider prefix and no catalog entry warns at load and silently routes
-> to the `local` provider** (it then fails at the first LLM call unless
-> you really run a local server) — typos like `gpt4o-mini` are the
+> provider prefix and no catalog entry goes to your local model server**
+> (an INFO log line says so). With no local server set up, 2.4.497 refuses it
+> and says where to add it (2.4.495 sent it to `default_provider`, else the
+> first loaded provider). Add the model on the
+> Models page to send it anywhere else. A prefix that names a known provider
+> with no key **raises** at the call. Typos like `gpt4o-mini` are the
 > classic case.
 
 **Retired or superseded — never write these in a new config:** `deepseek-chat`,
@@ -653,8 +659,10 @@ Endpoint) for another region or a proxy.
 | Cohere | `command-…` | live list | `CO_API_KEY`, `COHERE_API_KEY` |
 
 "live list" = the vendor's own model list, fetched once the key is saved
-(`GET /api/registry`). Don't invent an id for these — take it from the
-list. Vendor rules the SDK applies for you: Xiaomi and Tencent honour only
+(`GET /api/registry`). The list is only suggestions: each of these vendors
+takes any of its own model ids, a host's with its prefix
+(`openrouter/anthropic/claude-sonnet-5`) (2.4.458). Copy the id exactly from
+the vendor's own model list — never guess one. Vendor rules the SDK applies for you: Xiaomi and Tencent honour only
 `tool_choice: auto` (a pinned choice is left unset); Cohere is never sent
 `parallel_tool_calls`; Groq never gets temperature 0; a hosted GPT-5/6 or
 Claude 4.7+ is never sent temperature. OpenRouter reports each call's
@@ -1026,6 +1034,20 @@ agents:
   each framework's form asks for), `GET /api/external-agents/records?framework=`
   (the vault records it can sign in with). An entry an agent picks cannot be
   deleted; changing it reloads the agents that pick it.
+- **The record decides the kind (2.4.491).** An entry takes its framework from
+  the vault record it picks: a CrewAI record is a CrewAI agent, a LangGraph
+  record a LangGraph agent. Leave the entry's `framework` out. Only a custom
+  record needs one — `a2a` (Custom: A2A) or `custom_api` (Custom: API). A
+  `framework` that contradicts the record is refused on save ("the vault
+  record 'x' is a CrewAI record — this agent is CrewAI, not …").
+  `GET /api/external-agents/records` **with no** `framework` lists every record
+  an external agent can use, each with its `framework` (`null` for a custom
+  record).
+- **Custom: API from a swagger file (2.4.491).** `POST
+  /api/external-agents/from-spec` with `{"spec": "<the file's text>"}` lists
+  the POST / PUT / PATCH operations a Custom API agent can be (`method`,
+  `path`, summary) and the file's `servers` (use one as the record's base
+  URL). Nothing is saved; the address and keys still go only in the vault.
 - Tool platforms (`mcp`, `zapier`, `composio`, `n8n`) are **not** external
   agents on this page — they are set up on the Tools page.
 - **Custom agents are an API or A2A, nothing else:** the page offers
@@ -1034,7 +1056,7 @@ agents:
   on the page.
 - **The old shape still works.** An agent that writes `framework:` +
   `connector_config: {connection: …}` and no `external_agent` loads and runs
-  as before (verified on 2.4.486); Studio's agent form lists only the page's
+  as before (verified on 2.4.491); Studio's agent form lists only the page's
   entries.
 
 ### Managed-agent platforms (2.4.395/96)
@@ -1087,6 +1109,16 @@ back. With no block at all the agent is already safe: only its own configured
 host, HTTPS, a 1 MB reply cap, quarantine after 5 failures in a row, and vault
 secrets never sent.
 
+**An agent with no address is not set up (2.4.490).** When the connector's
+address is empty (n8n / Lindy `webhook_url`, A2A `url`, CrewAI / LangGraph /
+AutoGen / Foundry `endpoint`, `custom_api` / Glean / Relevance `base_url`,
+Agentforce `domain_url`, watsonx `service_url`, MCP `url` — or `command` for
+stdio), the agent is switched off at start with "not set up". It is never
+called and never counts toward `quarantine_after` (before 2.4.490 every run
+called it, it failed at once, and the 5th failure quarantined it). Put the
+address in the vault record; the agent switches back on with no restart.
+`framework: custom` is exempt.
+
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `allowed_hosts` | list | `[]` | Hosts it may call **besides** the host of its own configured URL (`url` / `endpoint` / `webhook_url` / `base_url`). Exact names or `*.example.com`. Host names, not URLs — a URL is refused at load. Any other host is refused; non-local hosts must use HTTPS |
@@ -1129,9 +1161,7 @@ agents:
 **Monthly budget on an external agent.** `monthly_token_budget` /
 `monthly_cost_budget` meter the spend the connector reports into the same
 month. A connector that reports none (`custom`, `n8n`, `zapier`, `mcp`, `a2a`,
-`composio`, `flowise`, …) could never be stopped by it, so the
-config is **refused at load** — cap the spend inside the external system
-instead. Vellum, Claude Agent and OpenAI Agents report their spend (2.4.385).
+`composio`, `flowise`, …) is metered by estimate: before each call the gate reserves the agent's last call's spend, and tokens are estimated from what the mesh sends and receives. `monthly_token_budget` always applies; `monthly_cost_budget` needs `price_per_1k_tokens` on the agent to price the estimate (without it only a token budget can stop it). Vellum, Claude Agent and OpenAI Agents report their spend (2.4.385).
 Running out is a failure: with `budget_on_exhaust: graceful` it is marked as a
 budget stop, with `escalate` a plain failure — never an empty success. Each
 call reserves what the agent's last call cost, so racing calls cannot
@@ -1317,7 +1347,7 @@ A Lindy agent is **webhook-triggered and callback-answering**. It is started by 
 
 | Field | Type | Default | Required | Description |
 |-------|------|---------|----------|-------------|
-| `webhook_url` | string | `""` | **yes** | *vault* — The *Webhook Received* trigger's URL. The connector refuses the call without it |
+| `webhook_url` | string | `""` | **yes** | *vault* — The *Webhook Received* trigger's URL. Without it the agent is not set up — switched off at start, never called (2.4.490) |
 | `webhook_secret` | secret | — | no | *vault* — The trigger's Generate-Secret value. **Store it in the vault** (it is a secret, not a literal) |
 | `mode` | string | `"sync"` | no | `"callback"` is the real mode (Lindy answers by POSTing back); `"sync"` only starts the Lindy — it returns an answer only if the webhook's reply carries a `result` (normally it doesn't) |
 | `callback_timeout` | float | `120.0` | no | Seconds to wait for Lindy's callback (used only in `mode: callback`) |
@@ -1461,6 +1491,22 @@ goes for `zapier: [{account: main}]`, `composio: [{account: gh}]` and
 `n8n: [{account: ops}]`; `use:` narrows further. Rows written out in full, as
 below, keep working.
 
+**`changes_nothing: true` on a `zapier` / `composio` / `n8n` row (2.4.491,
+default `false`)** says every action in that row only looks things up. A turn
+whose tools all change nothing may be stored in the response cache and
+replayed without running them. Mark it only when the answer also does not
+depend on **when** it ran (a policy table, a rate card, static reference
+data). A read of live data (an invoice's status, stock levels, a queue to
+claim from) stays off — a replay would be stale. Leave it off if any action
+sends, writes or deletes. `mcp:` rows have no such key: an MCP tool counts as
+changing nothing when its server marks it `readOnlyHint`.
+
+```yaml
+    n8n:
+      - account: rates          # a Tools-page n8n entry
+        changes_nothing: true   # this workflow only returns the rate card
+```
+
 **An http MCP server: pick its vault record with `connection:`** — required
 for `http` / `streamable_http` / `sse`.
 
@@ -1543,7 +1589,7 @@ old `api_key` fails with that explanation.
 
 | Field | Type | Default | Required | Env Fallback | Description |
 |-------|------|---------|----------|-------------|-------------|
-| `webhook_url` | string | `""` | **yes** | ~~`N8N_WEBHOOK_URL`~~ | *vault* — Full webhook trigger URL — **one URL per n8n workflow** |
+| `webhook_url` | string | `""` | **yes** | ~~`N8N_WEBHOOK_URL`~~ | *vault* — Full webhook trigger URL — **one URL per n8n workflow**. Empty: the agent is not set up — switched off, never called (2.4.490) |
 | `auth_token` | string | `""` | no | ~~`N8N_AUTH_TOKEN`~~ | *vault* — Bearer token |
 | `timeout` | float | `60.0` | no | — | HTTP request timeout (seconds, sync mode only) |
 
@@ -1833,7 +1879,7 @@ These fields are used when `agent_type` is `"programmatic"`.
 
 | Field | Type | Default | Accepted Values | Description |
 |-------|------|---------|-----------------|-------------|
-| `integration` | string | `null` | `zapier`, `composio`, `n8n`, `mcp` | Integration connector (optional) |
+| `integration` | string | `null` | `zapier`, `composio`, `n8n`, `mcp`, `python` | What a programmatic agent runs through: a connector, or `python` (2.4.492) — pure Python, your function is the whole agent, switched off while that function is not in the running project. Unset or a connector: never switched off for code |
 | `connector_config` | dict | `{}` | integration-specific key-values | Same fields as the matching external framework connector — see tables above |
 
 **Validation rule:** `integration` is only valid when `agent_type` is `"programmatic"`.
@@ -2851,7 +2897,7 @@ These are enforced by Pydantic validators in the SDK:
 | `agent_type` | Must be `llm`, `human`, `programmatic`, or `external` |
 | `human_interface` | Must be `api`, `webhook`, `custom`, or `default` — anything else **raises at load** (used to fail silently at the first live request) |
 | `entry_points` targets | `target` / `target_agent` must name a real agent — a typo **raises `ConfigError` at load** instead of failing at the first `mesh_call` |
-| `model` | Unknown model id (no provider prefix, not in the catalog) **warns at load** and routes to the `local` provider — see [Model List](#model-list) |
+| `model` | Unknown model id (no provider prefix, not in the catalog) goes to the local model server; with none set up it is refused (2.4.497; before, `default_provider`); a known provider with no key raises — see [Model List](#model-list) |
 | prompt ↔ `yields` | A prompt committing to JSON keys with zero overlap with the `yields` schema **raises at load** (the "Hello!" silent-fallback bug class) |
 | `temperature` + `yields` | `temperature > 0.5` with a yields contract **warns** — keep ≤ ~0.3 for structured output |
 | `communication_type` | Must be `dual` or `chain`. `execute` is read as `chain` (`dual` on a human seat) with a deprecation warning |
@@ -2859,7 +2905,7 @@ These are enforced by Pydantic validators in the SDK:
 | `max_tool_calls_per_message` | Must be 0–20 |
 | `tool_call_timeout` | Must be > 0 and <= 300 seconds |
 | `tool_choice` | Must be a non-empty string (`auto`, `none`, or a tool name). Leave unset — the SDK pins its configured memory / knowledge / reasoning tools on the first turn; an explicit `auto` switches that off. |
-| `framework` | A registered connector name or `custom` (or null). As of 2.4.486: `crewai`, `langgraph`, `autogen`, `a2a`, `custom_api` (2.4.486), `mcp`, `zapier`, `composio`, `n8n`, `hermes`, `lyzr`, `writer`, `dify`, `flowise`, `vellum`, `stackai`, `agentforce`, `watsonx`, `relevance`, `wordware`, `lindy`, `claude_agent`, `openai_agents`, `claude_managed`, `openai_agents_api`, `foundry_agents`, `vertex_agent_engine`, `bedrock_agentcore`, `copilot_studio`, `mistral_agents`, `letta`, `glean_agents`, `servicenow`, `sap_joule`, `workday`, `box`, `atlassian_rovo`, `gemini_enterprise`, `custom`. **`lindy` added 2.4.406. Not** `voiceflow`/`cognigy` (removed 2.4.395) |
+| `framework` | A registered connector name or `custom` (or null). As of 2.4.491 (unchanged since 2.4.486): `crewai`, `langgraph`, `autogen`, `a2a`, `custom_api` (2.4.486), `mcp`, `zapier`, `composio`, `n8n`, `hermes`, `lyzr`, `writer`, `dify`, `flowise`, `vellum`, `stackai`, `agentforce`, `watsonx`, `relevance`, `wordware`, `lindy`, `claude_agent`, `openai_agents`, `claude_managed`, `openai_agents_api`, `foundry_agents`, `vertex_agent_engine`, `bedrock_agentcore`, `copilot_studio`, `mistral_agents`, `letta`, `glean_agents`, `servicenow`, `sap_joule`, `workday`, `box`, `atlassian_rovo`, `gemini_enterprise`, `custom`. **`lindy` added 2.4.406. Not** `voiceflow`/`cognigy` (removed 2.4.395) |
 | `framework` required | When `agent_type` is `external`, `framework` must be set — or `external_agent` (2.4.486), which fills it in from the External agents page |
 | `external_agent` | A `framework` / `connector_config` beside it that differs from the page's entry → **refused** (2.4.486) |
 | Retired tools | `tools: [zapier_action \| mcp_call \| composio_action \| n8n_workflow]` → **refused at load** (2.4.485), naming the block that replaces each; `tool_categories: [integration]` → **refused** |
@@ -2868,10 +2914,11 @@ These are enforced by Pydantic validators in the SDK:
 | `reply_reader` | Needs `model`; only `model`, `model_connection`, `prompt`, `temperature`, `max_tokens`, `memory`, `knowledge`, `skills`, `experience` (bool); `intent_model` / `intent_prompt` disagreeing with it → **refused** (2.4.486) |
 | `external_policy.allowed_tools` / `denied_tools` | Each rule a tool name, a name pattern or `Tool(arg pattern)` — anything else **refused** (2.4.486) |
 | `yields` list with no item type | **Warns** at start and in validate, at any depth, on LLM agents (2.4.486) |
-| `integration` | Must be `zapier`, `composio`, `n8n`, `mcp` (or null) |
+| `super_agent.tries` | A map `{mode: fixed\|auto, count: 1–10, rounds: 1–10}` or a whole number 1–10; an unknown key, another mode or a number out of range → **refused** (2.4.491) |
+| `integration` | Must be `zapier`, `composio`, `n8n`, `mcp`, `python` (2.4.492) (or null) |
 | `integration` restricted | Only valid when `agent_type` is `programmatic` |
 | Approval fields | `require_human_confirmation` / `confirmation_seat` / `human_escalation_triggers` ON, or `external_policy.skills` marked send/spend/delete, or `external_policy.unknown_skill_risk: send|spend|delete` → **refused at load** (approval is routing) |
-| External monthly budget | `monthly_token_budget` / `monthly_cost_budget` on an external agent whose connector reports no spend (incl. `framework: custom`) → **refused at load** |
+| External monthly budget | On an external agent whose connector reports no spend (incl. `framework: custom`): not refused — metered by estimate; `monthly_cost_budget` with no `price_per_1k_tokens` can never bite and draws a load warning (2.4.497) |
 | `memory_strategy` / `knowledge_strategy` | Must be `tool`, `inject` or `both` |
 | `device.connection` | Required when `device:` is present; `approval` must be `ask` or `silent` |
 | `is_human_powered` sync | Auto-set to `true` when `agent_type="human"`, forced to `false` when `agent_type="llm"` |

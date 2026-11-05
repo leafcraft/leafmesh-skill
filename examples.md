@@ -320,8 +320,9 @@ agents:
 
 ### CrewAI (connector-only, no Python needed)
 
-2.4.486: set the crew up once on Studio's **External agents page** (framework
-`crewai`, its vault record, `poll_interval` / `max_poll_seconds`) and pick it:
+2.4.486: set the crew up once on Studio's **External agents page** (its CrewAI
+vault record — since 2.4.491 the record makes it a CrewAI agent, so name no
+framework — plus `poll_interval` / `max_poll_seconds`) and pick it:
 
 ```yaml
 agents:
@@ -354,7 +355,7 @@ has an entry):
   pricing_bot:
     name: "pricing_bot"
     agent_type: "external"
-    framework: "custom_api"                     # normally an External agents page entry ("Custom: API")
+    framework: "custom_api"                     # normally an External agents page entry ("Custom: API"; 2.4.491: POST /api/external-agents/from-spec reads its swagger file)
     connector_config:
       connection: "pricing-api"                 # "Add custom" record, service type 'External agent': base URL + header rows
       method: "POST"
@@ -559,7 +560,23 @@ async def db_query(sql: str) -> dict:
         return {"error": "Only SELECT queries allowed"}
     # Execute query...
     return {"rows": [], "count": 0}
+
+RATE_CARD = {"0-1kg": 4.50, "1-5kg": 9.00, "5-20kg": 18.00}
+
+@global_tool(
+    name="shipping_rate_card",
+    description="Shipping price for a weight band, from the published rate card",
+    category="data",
+    changes_nothing=True,   # 2.4.491: a pure lookup whose answer never depends on WHEN it ran
+)
+def shipping_rate_card(weight_band: str) -> dict:
+    return {"band": weight_band, "price_eur": RATE_CARD.get(weight_band)}
 ```
+
+`changes_nothing=True` lets a turn that used only such tools be replayed from
+the response cache without running them. `shipping_rate_card` qualifies (a
+static table). `fetch_weather` and `db_query` do **not**: they read live data,
+and a replay would hand back a stale answer — leave them unmarked.
 
 ---
 
@@ -583,7 +600,7 @@ async def my_agent(llm_response, input_data, context):
 
 ## Pattern 10: Super-Agent for Complex Multi-Step Tasks (v2.3.x)
 
-Use Super-Agent when the task genuinely has multi-step structure and you want per-step verification + retry-once + cost ceiling + cancellation without writing the orchestration glue yourself.
+Use Super-Agent when the task genuinely has multi-step structure and you want per-step verification + retry (one retry by default; `tries` tunes it, 2.4.491) + cost ceiling + cancellation without writing the orchestration glue yourself.
 
 ### config.yaml
 
@@ -604,6 +621,7 @@ agents:
       synth_max_tokens: 32768     # cap on the final synthesis call
       goal_check_view_chars: 12000  # chars the goal-check phase sees (default 12000)
       step_concurrency: 4         # parallel plan steps when the DAG allows
+      tries: {mode: auto, count: 3, rounds: 2}  # 2.4.491: 3 attempts at once only after a failed check
     # super_agent: true = on with all defaults. The flat super_agent_* keys were
     # never wired, and LEAFMESH_SUPER_AGENT_* env vars are dead as of 2.4.131.
 
@@ -657,7 +675,7 @@ curl -X POST http://127.0.0.1:18820/api/skills/sources \
 1. User submits a research question via `mesh_call("research_inbox", input={"question": "..."})`
 2. **plan** phase: LLM produces a structured 5-7 step plan, persisted to Redis (`leafmesh:plan:{session}:research_synthesiser:{run_id}`)
 3. **execute** phase: LLM runs each step in sequence; per-step output written to scratchpad
-4. **verify** phase: LLM checks each step's output against the step's `expected_outcome`. On soft-failure → retry-once with failure context. On hard failure → reflect.
+4. **verify** phase: LLM checks each step's output against the step's `expected_outcome`. On soft-failure → retry-once with failure context (`tries` changes the attempts and rounds, 2.4.491). On hard failure → reflect.
 5. **reflect** phase: LLM reads plan + scratchpad and proposes a plan amendment (bounded by `reflection_budget`)
 6. **finalize** phase: LLM synthesises the final output, honours `yields`, respects `synth_max_tokens_*` bounds
 7. Output flows through `can_call` — fact-checker if low confidence, human expert if flagged

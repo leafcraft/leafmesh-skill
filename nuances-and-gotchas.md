@@ -1,6 +1,6 @@
 # LeafMesh — Nuances & Gotchas (READ FIRST)
 
-**SDK baseline: 2.4.486** (templates pin `leafmesh>=2.4.486`). This file captures the non-obvious rules that cause
+**SDK baseline: 2.4.497** (templates pin `leafmesh>=2.4.497`). This file captures the non-obvious rules that cause
 real, hard-to-debug failures. Most "my agent silently does nothing" or "the
 handoff looks empty" or "Gemini behaves differently from GPT" reports trace to
 exactly one item below. Read this before wiring agents.
@@ -122,6 +122,11 @@ yields:
         target: "string"
 ```
 
+Write `type: "array"`. Since **2.4.487** `{type: list, items: …}` is read as
+an array everywhere too (before, the model was told it was an object), and the
+model's example shows every nested field — an object's declared fields and
+one item of a list of objects.
+
 **Trap B — dict-shaped yields were unvalidated (pre-2.4.101):** an
 array-of-objects contract used to silently accept an array of strings. Since
 2.4.101 dict-shaped `yields` are validated recursively (item types, nested
@@ -234,10 +239,21 @@ cleanly with a `budget_exhausted` marker; `escalate` routes to the Manager.
   It is also told that each tool round resends the whole request. The agent
   manages its own spend from that; the hard stop still applies when the month's
   budget is spent.
+- **Lean mode, and a learned per-task ceiling (2.4.457).** An agent ahead of an
+  even monthly pace keeps taking every task, but each gets one normal task's
+  share; the owner gets a daily Inbox notice, and it is back to normal once on
+  pace. Every LLM task, budget or not, also has a ceiling learned from the
+  agent's normal tasks (about 4× a typical one, once 10 are known). At the
+  ceiling no more tools run and the task answers from what it has. Neither has
+  a field. Never tell the user to "raise the budget" for this, and do not add
+  tool-count or token caps to protect cost — tune `max_tool_calls_per_message`
+  only for behaviour.
 - **External agents count too.** Each external-agent call's self-reported spend
   is metered into the same month. A connector that reports no spend
-  (`framework: custom`, `n8n`, `zapier`, `mcp`, `a2a`, …) could never be
-  stopped, so a budget on it is **refused at load**.
+  (`framework: custom`, `n8n`, `zapier`, `mcp`, `a2a`, …) is metered by
+  estimate: each call reserves the agent's last call's spend, and tokens are
+  estimated from what the mesh sends and receives. `monthly_cost_budget` needs
+  `price_per_1k_tokens` on the agent; without it only a token budget bites.
 - Inert on human and programmatic agents.
 
 ---
@@ -247,6 +263,31 @@ cleanly with a `budget_exhausted` marker; `escalate` routes to the Manager.
 `X-Tenant-ID` on a request scopes that request's data + events to a tenant. The
 SDK never mints tenant ids — you pass them. `env_token` and other secrets are
 stripped from API/UI responses; never surface them.
+
+- **A tenant can bring its own credentials (2.4.488).** It fills the
+  organisation's records (`GET /api/infra/tenant-credentials`: same name,
+  provider and rows). On a listed provider's record the organisation offers
+  `tenant_models`; the tenant picks one as `model` on its own record. Its runs
+  sign in with its key and that model. With `tenant_credentials_only: true` on
+  the agent, a tenant with no record of its own is stopped ("this tenant has
+  not connected <record>"), never given the organisation's. The Manager always
+  uses the organisation's key. A tenant's own key failing is one quiet warning
+  and never marks the model down for everyone.
+- **The tenant id never reaches a model**, nor the input sent to an outside
+  agent (it travels in code). The outbound call's `X-Tenant-ID` header still
+  carries it, so a multi-customer outside service can keep data apart.
+- **Cost by tenant comes from telemetry (2.4.489).** `GET /api/budgets/tenants`
+  is gone. Agent and model-call spans carry `leafmesh.tenant_id`, and each
+  model call `leafmesh.paid_by` (`tenant_key` / `organisation_key`) — filter
+  dashboards on those.
+- **Forget a tenant:** `DELETE /api/infra/tenants/{tenant}` (organisation
+  only; refused while the tenant still holds vault records of its own). Only
+  the tenants list changes; a later request carrying it adds it back.
+- **A tenant joining an untenanted session mid-flow pays from then on**
+  (2.4.491): its credentials and spans apply; the session's data stays where
+  it started. Another tenant on the same session is refused.
+- **A Slack thread reply runs in its session's tenant** (2.4.491) — the
+  person replying never sends it.
 
 ---
 
@@ -518,6 +559,11 @@ the agent that acts. See [SKILL.md — Approval is routing](SKILL.md#approval-is
   human seat, or broker consumer) that needs it is switched off, loudly, and its runs fail at once with the reason.
   Add the connection later and the agent switches back on with no restart. A
   vault that cannot be read is only a warning — nobody is switched off for it.
+- **A connector with no address is not set up (2.4.490).** The record exists
+  but holds no address (n8n `webhook_url`, A2A `url`, CrewAI `endpoint`, …):
+  the agent is switched off at start with "not set up", never called, never
+  counted toward quarantine. Put the address in the vault record and it
+  switches back on with no restart. `framework: custom` is exempt.
 - SDK 2.4.384 and earlier logged `Environment variable not set: vault` for a
   `${vault:...}` value. It was cosmetic (vault references are never treated as
   env vars) and is gone from 2.4.385.
@@ -595,7 +641,12 @@ the agent that acts. See [SKILL.md — Approval is routing](SKILL.md#approval-is
   `external_agent: <entry>`. A `framework` / `connector_config` beside it that
   differs from the entry is refused. The old `framework:` + `connector_config:
   {connection: …}` shape still loads and runs.
-- **Avoid SDK 2.4.385** (the 2.4.486 baseline is well clear of it): 2.4.385
+- **The entry's kind comes from its vault record (2.4.491).** Don't name a
+  framework on the page entry: a CrewAI record is CrewAI. Only a custom record
+  needs `a2a` (Custom: A2A) or `custom_api` (Custom: API); a framework that
+  contradicts the record is refused. A Custom API agent can start from a
+  swagger file: `POST /api/external-agents/from-spec`.
+- **Avoid SDK 2.4.385** (the 2.4.497 baseline is well clear of it): 2.4.385
   fails `import leafmesh` on Python 3.10–3.13 — fixed in 2.4.386 — and with
   mcp 2 an MCP stdio server could keep the program from exiting.
 
@@ -732,7 +783,7 @@ set on the page that uses the record:
 | Outbound webhook | header rows (+ the secret `inbound_token`) | on **Tools → Webhooks** (the webhook's body fields and fixed query) |
 | API tools | header rows; a key the API wants in the address as a **secret** query row; an OAuth app's client id / secret or a username / password as body rows (sign-in, never sent as they are) | on the API's Tools-page entry: `query` — fixed values, sent on every call, never overridden |
 | Model | header rows | on the added model's Models-page entry: `query` (e.g. an `api-version`) |
-| External agent | header rows | on the External agents page entry (Custom API: `method`, `path`, `query`, `answer_path`) |
+| External agent | header rows; for Custom API, a key the API wants in the address as a **secret** query row (2.4.497) | on the External agents page entry (Custom API: `method`, `path`, `query`, `answer_path`) |
 | Tools, Knowledge store, Your own code | header rows | the page that uses the record |
 
 - **Saving** a record with a query or body row is **refused** (API tools
@@ -775,7 +826,7 @@ off even for its entry points.
 | `mcp:` rows | `{transport, connection, use?, name?, timeout?}` or `{server}`; stdio `env` secrets as `${vault:<field>}` | the MCP server's connection, or an "Add custom" record, service type 'Tools' (base URL = address) | `url`, `token`, a literal secret/address in `env` |
 | `zapier` / `composio` / `n8n` rows | `vault_connection` (or `account:` from the Tools page) | the provider's connection, or an "Add custom" record, service type 'Tools' | `api_key`, `base_url` |
 | `notify` (2.4.485) | `{webhook: <Tools → Webhooks name>, when}` | the Outbound webhook record the webhook picks | an address (`://`, `www.`) |
-| `n8n()` / `zapier()` / `composio()` helpers in your code (2.4.485) | `connection="<record>"` | Infrastructure → Integrations → `<platform>`, or an "Add custom" record, service type 'Tools' | `n8n("https://…")`, `webhook_url=`, `auth_token=`, `api_key=`, `mcp_key=` — refused when the helper is created |
+| `n8n()` / `zapier()` / `composio()` helpers in your code (2.4.485), `mcp()` (2.4.497) | `connection="<record>"` (`mcp("tool", connection=…)`; stdio: `command`/`args` in code, keys as the record's rows) | Infrastructure → Integrations → `<platform>`, or an "Add custom" record, service type 'Tools' | `n8n("https://…")`, `mcp("https://…", …)`, `webhook_url=`, `auth_token=`, `api_key=`, `mcp_key=` — refused when the helper is created |
 | `brokers` kafka / sqs / imap | `type`, `connection` + behaviour (sasl_mechanism, region, auth, …) | a kafka / sqs / imap connection | addresses, usernames, passwords, keys, PEMs |
 | `brokers` mqtt | `type, connection, use_tls, ssl_cafile, ssl_certfile, ssl_keyfile, client_id, keepalive_s` | mqtt connection, `url` = `mqtt://host:port` or `mqtts://…` | `host`, `port`, `username`, `password`, PEMs |
 | `brokers` redis_streams | `type, connection, db` | redis_streams connection (`url`) | `url` |
@@ -941,12 +992,106 @@ target for that:
 - **Model calls that run no tools go through the response cache** — the reply
   reader, the Manager's analysis, the board designer. The cache keys on the
   request and serves an answer whose background (recalled memory, knowledge,
-  prefetched lookups) is at least 85% similar. A turn that ran tools is
-  **never stored** (replaying it would skip the tools' effects).
-  `GET /api/llm/cache/stats` adds `near_hits` and `not_stored_tools` — a
-  tool-using mesh with no hits shows why there.
+  prefetched lookups) is at least 85% similar.
+- **Since 2.4.487 only lookup-only turns are stored.** A cached answer is
+  replayed **without running the turn's tools**, so every tool the turn used
+  must change nothing: the built-in reads (`recall_memory`,
+  `recall_experience`, `view_board`, `query_knowledge`,
+  `load_skill_reference`, `calculator`, `time_difference`, the text / JSON
+  formatters, `playbook`, `api_find`, …), an MCP tool its server marks
+  `readOnlyHint`, board bookkeeping the mesh redoes itself (`add_task`,
+  `update_task`, `finish_task`, …), or a tool you mark `changes_nothing`
+  (2.4.491: `@tool(..., changes_nothing=True)`, `@global_tool(...,
+  changes_nothing=True)`, a class tool's `CHANGES_NOTHING = True`, or
+  `changes_nothing: true` on a `zapier` / `composio` / `n8n` row). Any other
+  tool keeps the turn out. `current_time`, `random_number` and `system_info`
+  are not on the list.
+- **Mark `changes_nothing` only when the answer also does not depend on WHEN
+  it ran** — a policy table, a rate card, static reference data. A read of
+  live data (an invoice's status, stock levels, a queue to claim from) must
+  stay off: a replay would hand back a stale answer. Claiming work, sending,
+  writing, remembering, scheduling or reading the clock are never
+  `changes_nothing`.
+- **Never personal data or a secret.** A request or reply carrying an email,
+  phone, card, bank or ID number, or any secret the mesh knows, is not stored
+  at all (not masked).
+- `GET /api/llm/cache/stats` shows `near_hits` and why answers were not kept:
+  `not_stored_tools`, `not_stored_personal_data`, `not_stored_secret`.
+- The cache is keyed on the model that really answers — a tenant's picked
+  model never shares answers with the agent's model (2.4.488).
 
 ---
+
+## The mesh's own sign-in (2.4.497)
+
+Each mesh signs in to LeafCraft with its own Ed25519 key pair; the build
+carries no shared key.
+
+- **First start** registers the key with `LEAFMESH_LICENSE_KEY` +
+  `LEAFMESH_ENV_TOKEN` (the real token from Studio; `development`, `default`
+  or empty can't register). ACTIVE at once when both are valid. PENDING only
+  if the organisation turned on "require approval": a brand-new mesh then
+  stops at start ("…waiting for approval in Studio (Keys → SDK access)…");
+  a mesh that already ran keeps going on its cached / signed licence.
+  Organisation admins are emailed on every new registration. A cloud identity
+  outside the organisation's trusted connection is refused, not pending.
+- **Key store:** `security.sdk_auth.key_store: vault` (default) — encrypted
+  with `LEAFMESH_VAULT_KEY` in the mesh's store, shared by every replica
+  (the first makes it under a lock). A wiped store or a new vault key makes a
+  new key pair that registers again; revoke the old one in Studio.
+  `key_store: file` only for a single host with no shared store.
+- **CLI:** `leafmesh auth status [--check]` (ids and fingerprints, never a
+  key), `leafmesh auth register`, `leafmesh auth rotate` (switches once the
+  new key is active, then revokes the old). A revoked or expired key is never
+  revived.
+- **The env token also namespaces the store.** An existing agency moving
+  from `LEAFMESH_ENV_TOKEN=development` to its real token starts on an empty
+  keyspace (vault, sessions, lessons, board); the old data stays under the
+  old prefix. Set the real token before data goes in.
+- **Shown once (from 5 Dec 2026, SDK >= 2.4.497).** Org API keys, agency
+  tokens, environment tokens and the licence key are shown once at creation
+  or rotation, then only a hint. A lost environment token is rotated in
+  Studio — which moves the mesh to a new, empty keyspace, so rotate before
+  data goes in. People reach a mesh with Studio's short-lived pass (no edit
+  rights = view only); systems with the org API key (kept after 5 Dec).
+
+## What a running Docker project picks up (2.4.495)
+
+The image holds the Python code and the seed `config.yaml`; `.env` is read
+when the container is created; the store keeps the configuration.
+
+- **Live, no restart:** every agent field edited in Studio, `wake_up`
+  included (2.4.492: added, changed, deleted or renamed, on every pod);
+  adding or deleting an agent; vault changes (model keys, MCP, webhooks,
+  connectors, Slack tokens, and since 2.4.492 an email account's
+  credentials). An agent switched off for a missing connection or address
+  switches back on by itself.
+- **Reload in place (seconds, no restart):** a seat's `channels`, and mesh
+  fields `architecture`, `manager.enabled`, `limits.consumer_inflight_max`,
+  `runtime.lease_*`, `self_healing.enabled`, `api.cors_origins`, `brokers`,
+  `auto_discover`. Each field's `applies` (live | reload | process_restart)
+  is in the Studio contract. Only `evolution_api.*` needs a process restart.
+- **`docker compose up -d`:** any `.env` change. Since 2.4.492 a model key in
+  the vault wins over the same key in `.env`, with a warning; since 2.4.497
+  so does every value the vault holds (endpoints, organisation / project ids,
+  cloud identities). The `.env` value returns when the record goes.
+- **Rebuild (`docker compose up -d --build`):** Python code — programmatic
+  agents, `@tool` / `@global_tool`, `@pre_compose`. It loads at start only.
+  Since 2.4.492 a programmatic agent that says `integration: python` (pure
+  Python) is switched off while its function is missing; one that names a
+  connector, or says nothing, stays on and a call to missing code fails.
+- **Never:** `config.yaml` after the first start (a new, empty store imports
+  it again).
+- **Several containers on one store:** a save reaches each within about 15 s
+  (`runtime.config_sync_poll_s`); a `wake_up` fires once across them.
+- **Upgrades:** the stored configuration is not migrated. If a newer SDK
+  refuses it ("Configuration has N error(s) in the stored configuration"),
+  repair it with the mesh stopped (2.4.492+; reads `.env`, the agency from
+  `--agency`, `LEAFMESH_AGENCY_NAME`, or `configs/config.yaml`):
+  `leafmesh config check` (each problem with its line), `versions` (which
+  pass, which is in use), `rollback` (to the newest that passes, saved as a
+  new version), `export` / `import` (edit by hand; import checks first). In
+  Docker: `docker compose run --rm <app service> leafmesh config check`.
 
 ## Quick "why is my agent misbehaving?" checklist
 
@@ -985,4 +1130,9 @@ target for that:
 | A person said "thank you" and the conversation closed | Intended (2.4.486): an answer no route takes ends it — [A person's reply](#a-persons-reply--what-reads-it-and-where-it-goes-24486) |
 | The fan-in target ran twice | Intended (2.4.486): it runs when `wait_for` is met and again as late work arrives (`update_from`) — [Fan-in](#fan-in-runs-now-and-again-as-late-work-arrives-24486) |
 | `from_yaml` raises "still has a persistence: block whose values differ from .env" | #24 — add the named lines to `.env`, remove the block |
-| "yields 'x.y' is a list with no item type" warning | Declare the item type with `type: array`: `{type: array, items: string}` or `{type: array, items: {type: object, fields: {...}}}`. Write `array`, not `list`, in the dict form: only `array` reaches the model's output hint and the JSON schema; `{type: list, …}` is described to the model as an object (#3, Trap A) |
+| "yields 'x.y' is a list with no item type" warning | Declare the item type with `type: array`: `{type: array, items: string}` or `{type: array, items: {type: object, fields: {...}}}`. Write `array` in the dict form; `{type: list, …}` is read as `array` too since 2.4.487 (before, the model was told it was an object) (#3, Trap A) |
+| Agent "switched off" at start: "not set up" / "its n8n connector has no address" | 2.4.490: the connector has no address (n8n `webhook_url`, A2A `url`, …). Put it in the vault record — it switches back on with no restart; it is never called or quarantined meanwhile |
+| `from_yaml` gives `config.agents` empty, with no error | By design since 2.4.481: a file that does not pass validation loads only its boot part (agency name, store). `start()` reports the file's problems when it imports it. Fix them and start again |
+| A Super-Agent run costs several times more model calls | `super_agent.tries` (2.4.491): `count` × `rounds` attempts per step — lower them or use `mode: auto` |
+| The response cache never hits | `GET /api/llm/cache/stats`: `not_stored_tools` (a tool not marked `changes_nothing`), `not_stored_personal_data`, `not_stored_secret` — [the response cache](#memory-experience-and-the-response-cache-24486) |
+| "this tenant has not connected <record>" | The agent has `tenant_credentials_only: true` and the run's tenant has no record of its own (2.4.488) — the tenant fills it (`GET /api/infra/tenant-credentials`) |

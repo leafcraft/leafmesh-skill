@@ -49,6 +49,11 @@ What follows from it:
   that does something, **not** a standalone agent per writer. Conversely, never
   merge a control (approval step, reviewer, actuator, audit) into a role — see
   [Rule 2's "never merged" list](SKILL.md#rule-2--one-role-multiple-responsibilities-the-hiring-test).
+- **Write the one sentence into `description`.** Since 2.4.487 the agent you
+  hand work to is told who sent it — your name, your `description`, and for a
+  person's seat whom it `represents`. A blank or vague description leaves the
+  receiver guessing whether it is answering the customer, a colleague or
+  another agent.
 
 ### A2. The four stages — and what belongs in each
 
@@ -171,6 +176,12 @@ result told the user which briefing they got.**
   wanted a day AND notifications from two readers paid twice and, on a background
   pass, got **two answers from two different moments with nothing saying so**.
   Collapse N ways to read one thing into one.
+- **`changes_nothing` is a promise about time, not just about writes**
+  (2.4.491). A tool marked `changes_nothing=True` may be skipped on a replay
+  from the response cache. Mark only lookups whose answer never depends on
+  when they ran (a rate card, a policy table). A read of live data — an
+  invoice's status, stock, a queue to claim from — stays unmarked, or the
+  replay hands back yesterday's answer as today's.
 
 ### A5. Truth protocols — never say something about a person's life that isn't so
 
