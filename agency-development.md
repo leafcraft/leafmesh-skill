@@ -66,7 +66,9 @@ cleared this bar.
 5. **Forward-flow DAG, no conductor hubs.** Work flows forward and the
    originator steps out. Hub agents that re-dispatch create loops. The only
    cycles allowed are **bounded back-edges** (rework), counted and capped.
-6. **Trust by construction.** Human gates are default-deny on timeout;
+6. **Trust by construction.** Human steps are default-deny on timeout (since
+   2.4.486 a seat whose time is up just stops waiting — nothing escalates —
+   unless `fallback_on_timeout` answers for it);
    safety rules are enforced in `@chain` (not hoped for in a prompt); every
    terminal path lands in a WORM audit; controls fail closed.
 7. **State lives in the customer's systems**, not template storage. Jira,
@@ -93,7 +95,7 @@ type (§3). Aim for the smallest cast that still reads as a real department.
 - **Ingress:** one entry point per channel/trigger; add `brokers` +
   `listen_events` for event/async triggers; `wake_up` cron for sweeps.
 - **Forward edges:** `can_call` with conditions on `calling_agent_response.*`.
-- **Human gates** at every high-judgment or irreversible step (default-deny).
+- **Human steps** at every high-judgment or irreversible step (default-deny).
 - **Bounded back-edges** for rework only (Rule 3 — counter + cap + escape).
 - **Audit terminus** on every branch.
 Sanity-check: is there any hub everything returns to? Remove it.
@@ -148,7 +150,7 @@ perform`, Role = job title), and a **PRD** for the deeper architecture.
 | `llm` | judgment over text — classify, draft, decide, converse | grounds via `knowledge:` RAG; carries the OUTPUT CONTRACT |
 | `programmatic` | deterministic logic or a pure connector push (`integration` + `connector_config`) | no Python needed if connector-only |
 | `human` | high-judgment / irreversible sign-off; an operator on *your* side | default-deny fallback; routes on `human_message` |
-| `external` (`framework:`) | hand work to another runtime — `claude_agent` (autonomous coding), `mcp`/`n8n` (systems), crewai/langgraph/… | `@pre_compose` runs before the connector; shaper after |
+| `external` (`external_agent:` from the External agents page, 2.4.486; or `framework:`) | hand work to another runtime — `claude_agent` (autonomous coding), `mcp`/`n8n` (systems), crewai/langgraph/…, your own API (`custom_api`) | `@pre_compose` runs before the connector; shaper after. A `claude_agent`'s tools / folder / permission mode are host rights: `leafmesh agent host-rights` (2.4.485) |
 
 ---
 
@@ -207,6 +209,12 @@ The model that resolves "how does the customer talk to the mesh?":
    contains the connectors you use.** A config parses fine on a version that
    *lacks* `claude_agent`; that load proves nothing. **Config-load ≠ runtime
    proof** — this is the single most common false-confidence trap.
+   Since 2.4.481 `from_yaml` checks the FILE, but `start()` runs the
+   **store's** version: against a store that already has one, your edits to
+   `config.yaml` are not what runs (boot logs "… that edit was NOT applied").
+   Run smoke and live tests against an **empty** store (a fresh Redis DB /
+   Postgres database) so the file is imported, or save the change through
+   Studio / `PUT /api/yaml/raw`.
 3. **Module smoke tests** — run each `agency/*_agent.py` directly with stub
    inputs; assert the floors fire, the gate holds, the shaper maps.
 4. **Live smoke test** — for mechanics you *cannot* introspect from compiled
@@ -231,15 +239,13 @@ Before declaring done, hunt for:
   - A route promised in an agent's **prompt / free-text comment** with **no
     mechanism** (no `can_call` edge, not in the `narration:` field) → a real
     bug; the LLM can't route. Add a `can_call` edge.
-  - The **`narration:` field is a legitimate primitive** — additive,
-    Manager/Summarizer-dispatched, may name *any* agent (only when the
-    Manager is enabled; non-deterministic; ignored if Manager off).
-    Conditions are the authority. So: a **must-happen route** (failure
-    branch, legal/safety/escalation gate, anything default-deny) must be a
-    deterministic **`can_call` condition** — never narration alone. A
-    genuine **"maybe" route** ("if they sound frustrated, perhaps retention")
-    is correctly left as `narration:`. Don't convert advisory additive
-    narration into an exclusive edge (that changes semantics).
+  - The **`narration:` field routes nothing since 2.4.535.** The Manager
+    reads it when it judges a hand-off and tells a person when one went to
+    the wrong agent; it never calls the agent the narration names. So
+    **every route that should happen** (failure branch, legal, safety or
+    escalation step, anything default-deny, and any "maybe" route you want
+    taken) must be a **`can_call` condition**. Keep narration to say what
+    a good hand-off looks like.
 - **LLM-only safety** — PII/escalation/policy enforced only in a prompt; add
   the deterministic `@chain` floor.
 - **Silent dead code** — a `*_agent.py` matching no agent; an external agent

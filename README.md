@@ -25,7 +25,7 @@ New projects don't need any of this:
 
 ```bash
 pip install create-leafmesh
-create-leafmesh create my-agency
+create-leafmesh my-agency
 ```
 
 ## What's inside
@@ -38,9 +38,11 @@ create-leafmesh create my-agency
 | `reference.md` | Config blocks, providers, listeners, deployment |
 | `examples.md` | Working agencies, end to end |
 | `agency-development.md` | Building a new agency from nothing |
+| `building-agents-thoroughly.md` | How to design each agent and the mesh in depth |
 
 ## Keeping it current
 
+This copy matches LeafMesh SDK 2.4.540 (create-leafmesh 2.9.4).
 The skill tracks the SDK, so it moves when the SDK does. Pull before starting
 anything substantial. It is generated from the `create-leafmesh` templates —
 raise issues and fixes there, and they land here on the next release.
