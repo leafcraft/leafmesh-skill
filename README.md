@@ -42,7 +42,7 @@ create-leafmesh my-agency
 
 ## Keeping it current
 
-This copy matches LeafMesh SDK 2.4.540 (create-leafmesh 2.9.4).
+This copy matches LeafMesh SDK 2.4.544 (create-leafmesh 2.10.3).
 The skill tracks the SDK, so it moves when the SDK does. Pull before starting
 anything substantial. It is generated from the `create-leafmesh` templates —
 raise issues and fixes there, and they land here on the next release.
