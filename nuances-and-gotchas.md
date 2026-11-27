@@ -1,6 +1,6 @@
 # LeafMesh — Nuances & Gotchas (READ FIRST)
 
-**SDK baseline: 2.4.544** (templates pin `leafmesh>=2.4.542`, which installs 2.4.544 from PyPI). This file captures the non-obvious rules that cause
+**SDK baseline: 2.4.551** (templates pin `leafmesh>=2.4.542`, which installs 2.4.551 from PyPI). This file captures the non-obvious rules that cause
 real, hard-to-debug failures. Most "my agent silently does nothing" or "the
 handoff looks empty" or "Gemini behaves differently from GPT" reports trace to
 exactly one item below. Read this before wiring agents.
@@ -238,6 +238,8 @@ whose only tools are these two still counts as a turn with no work tool.
 `monthly_token_budget: N` / `monthly_cost_budget: N.NN` cap an agent's spend per
 calendar month. `budget_on_exhaust: graceful` (default) makes the agent stop
 cleanly with a `budget_exhausted` marker; `escalate` routes to the Manager.
+Since 2.4.551 the same choice applies when the budget runs out in the middle of
+a task: `escalate` hands that case to a person.
 
 - **A budget is paced, not a wall you hit on day two.** On every model call the
   agent is told where it stands: what it has used, how much of the month has
@@ -1038,6 +1040,47 @@ target for that:
   model never shares answers with the agent's model (2.4.488).
 
 ---
+
+## Routing on who sent the work, and on a request for help (2.4.545–2.4.551)
+
+- **`called_by` (2.4.546).** A route condition can read who handed the agent
+  its work: `{agent: case_builder, condition: "called_by == 'case_builder'"}`.
+  The agent's own output cannot overwrite it, and an unknown sender is `""`.
+  Use it when one agent is called from several places and must send the
+  result back to whoever asked.
+- **`needs_help` (2.4.545).** A Codex or Claude Code external agent can stop
+  and ask a person. Its result is marked `needs_help`, and the mesh then offers
+  only routes to a person: a human seat, or a route conditioned on
+  `calling_agent_response.needs_help == true`.
+  - With a human-seat route, nothing escalates: the case waits on that person.
+  - With no such route, there is no retry or replay. One escalation carries the
+    agent's question to the `manager.escalation` targets (none declared → the
+    first Inbox seat / operator Inbox). Once delivered, the session is
+    `escalated` and later chains on it are muted. If nobody could be told, the
+    session stays alive and an `escalation.failed` notice is raised.
+  - So give every Codex or Claude Code agent a route to a person.
+
+## Codex and Claude Code as external agents (2.4.545–2.4.551)
+
+- **`framework: codex` (2.4.545)** talks to a Codex App Server. Its vault card
+  is "Codex (App Server)" under External agents. It holds `url` (the
+  App Server's WebSocket listener, `ws://` or `wss://`, from
+  `codex app-server --listen`) and `auth_token` (the listener's token from
+  `--ws-auth capability-token`, sent as `Authorization: Bearer`). Both are
+  required, and the agent refuses to start without the token. The card has no
+  "agents sign in as themselves" option.
+- **Claude Code over A2A (2.4.551).** "Is this Claude Code?" is a field of the
+  A2A vault record (`claude_code`, yes/no). The record's answer wins over an
+  agent's older `connector_config.claude_code: true` tick; that tick still
+  loads, with a one-time notice. Set it on the record, not in YAML.
+- **Output contract sent for you (2.4.545).** Connectors that send input to
+  another system (`custom_api`, `a2a`, `langgraph`, `crewai`, `openai_agents`
+  and the chat platforms) now send the agent's output contract automatically.
+  It is extra input only: the reply's required shape and the retry on a
+  contract violation are unchanged. Don't also paste an OUTPUT CONTRACT into
+  those agents' prompts. `framework: custom` (the agency's own function) and
+  `claude_agent` are sent no contract and are unchanged.
+- No YAML field or setting was added or removed in 2.4.545–2.4.551.
 
 ## The model's copy is masked, not the code's (2.4.544)
 

@@ -8,8 +8,8 @@ allowed-tools: Read, Grep, Glob, Edit, Write, Bash
 
 You are an expert at building multi-agent orchestration systems with the LeafMesh SDK.
 
-> **SDK baseline: 2.4.544** (the latest on PyPI; the templates pin
-> `leafmesh>=2.4.542`, which installs it; 2.4.542 itself was never on PyPI). A customer on an older install may lack newer features — check
+> **SDK baseline: 2.4.551** (the latest on PyPI; the templates pin
+> `leafmesh>=2.4.542`, which installs it; not every SDK version reaches PyPI). A customer on an older install may lack newer features — check
 > `pip show leafmesh` before relying on them). Since 2.4.538 **the licence key
 > is never kept**: it signs the environment in once and is not needed again
 > ([The mesh's own sign-in](nuances-and-gotchas.md#the-meshs-own-sign-in-24538)).
@@ -2009,7 +2009,7 @@ agents:
     agent_type: "external"
     external_agent: "research_crew"  # 2.4.486 — an entry on the External agents page (framework + record + settings)
     # Old shape, still accepted:
-    # framework: "crewai"          # crewai | langgraph | autogen | a2a | custom_api | mcp | n8n | zapier | composio | custom
+    # framework: "crewai"          # crewai | langgraph | autogen | a2a | codex | custom_api | mcp | n8n | zapier | composio | custom
     # connector_config:
     #   connection: "crewai"       # Infrastructure → External agents → CrewAI: endpoint + api_key (vault-only, 2.4.482)
     yields: {result: object}
@@ -2741,7 +2741,7 @@ Infrastructure page (a key plus, for the table vendors, an optional
 Endpoint for another region or a proxy — `<NAME>_BASE_URL` in env).
 
 **How many providers depends on the SDK.** 2.4.434 and later (PyPI has
-2.4.544): **27** — the table below. 2.4.418 and older installs: **10** built
+2.4.551): **28** with Sarvam since 2.4.551, 27 before — the table below. 2.4.418 and older installs: **10** built
 in plus any OpenAI-compatible endpoint. Don't promise a provider the
 customer's installed SDK does not have.
 
@@ -2773,6 +2773,7 @@ customer's installed SDK does not have.
 | Reka | `reka-` | `REKA_API_KEY` |
 | Arcee | `trinity-`, `arcee-` | `ARCEE_API_KEY` (or `ARCEEAI_API_KEY`) |
 | Cohere | `command-` | `CO_API_KEY` (or `COHERE_API_KEY`) |
+| Sarvam (Token Factory, 2.4.551) | `sarvam/` (stripped), e.g. `sarvam/sarvam-105b` | `SARVAM_API_KEY`, or the "Sarvam (Token Factory)" card on Infrastructure → Models |
 | Local (vLLM, Ollama, etc.) | any other name | Models → Local / self-hosted record (or `LOCAL_MODEL_ENDPOINT` in `.env`) + `mesh.local.server_type`; `endpoint` in YAML is refused (2.4.481) |
 
 Picking a model: only write ids from

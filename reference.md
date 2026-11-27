@@ -77,13 +77,13 @@ posts, next_cursor = await sdk.get_agent_feed("agent_name", count=50, cursor="+"
 posts, next_cursor = await sdk.get_session_feed("session_id", count=50, cursor="+")
 
 # Custom LLM provider — use only for providers NOT already built in.
-# Built-in providers — 2.4.434+ (PyPI has 2.4.544): 27 (2.4.418 and older
+# Built-in providers — 2.4.434+ (PyPI has 2.4.551): 28 with Sarvam (2.4.551), 27 before (2.4.418 and older
 # installs: 10 + any OpenAI-compatible endpoint) — OpenAI, Anthropic, Google, DeepSeek, AWS Bedrock,
 # GCP Vertex, Azure Foundry, xAI Grok (XAI_API_KEY), Mistral (MISTRAL_API_KEY),
-# local/self-hosted, and 17 chat-completions vendors — OpenRouter, Groq,
+# local/self-hosted, and 18 chat-completions vendors — OpenRouter, Groq,
 # Cerebras, Moonshot Kimi, Alibaba Qwen, Z.AI GLM, MiniMax, Inception, Meta
 # Muse, Tencent Hunyuan, Xiaomi MiMo, StepFun, Upstage, Poolside, Reka, Arcee,
-# Cohere (env vars in the table at the end). Any OpenAI-compatible model is
+# Cohere, Sarvam (2.4.551) (env vars in the table at the end). Any OpenAI-compatible model is
 # also reachable via openrouter/<lab>/<model>. You only need
 # register_llm_provider for something truly new (e.g. an internal gateway).
 sdk.register_llm_provider(
@@ -740,6 +740,7 @@ leafmesh vault rotate-key --new-key-file PATH [--generate] [--old-key-file PATH]
 | `UPSTAGE_API_KEY` | For `solar-…` models | Upstage key |
 | `POOLSIDE_API_KEY` | For `poolside/…` models | Poolside key |
 | `REKA_API_KEY` | For `reka-…` models | Reka key |
+| `SARVAM_API_KEY` | For `sarvam/…` models (2.4.551) | Sarvam Token Factory key |
 | `ARCEE_API_KEY` | For `trinity-…` / `arcee-…` models | Arcee key (`ARCEEAI_API_KEY` also read) |
 | `CO_API_KEY` | For `command-…` models | Cohere key (`COHERE_API_KEY` also read) |
 | `<NAME>_BASE_URL` | No | Moves a vendor's address (region or proxy), e.g. `QWEN_BASE_URL`, `OPENROUTER_BASE_URL` |
